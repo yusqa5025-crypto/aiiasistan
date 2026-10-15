@@ -79,7 +79,7 @@ HTML = r'''<!DOCTYPE html>
 <html lang="tr">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
 <meta name="theme-color" content="#212121">
 <title>AI Asistan</title>
 
@@ -118,7 +118,7 @@ body{
 }
 button,textarea{font:inherit;color:inherit}
 button{cursor:pointer}
-#app{height:100dvh;display:flex;flex-direction:column}
+#app{height:var(--vh,100dvh);display:flex;flex-direction:column}
 #top{
  height:64px;flex-shrink:0;display:flex;align-items:center;
  justify-content:space-between;padding:0 12px;
@@ -778,6 +778,19 @@ if (!localStorage.getItem("groq_key")) setTimeout(askKey, 600);
 
 messagesEl.appendChild(welcomeEl());
 renderHistory();
+</script>
+<script>
+(function(){
+  var v = window.visualViewport;
+  function f(){
+    var h = v ? v.height : window.innerHeight;
+    document.documentElement.style.setProperty('--vh', h + 'px');
+    window.scrollTo(0, 0);
+  }
+  if (v) { v.addEventListener('resize', f); v.addEventListener('scroll', f); }
+  window.addEventListener('resize', f);
+  f();
+})();
 </script>
 </body>
 </html>'''
