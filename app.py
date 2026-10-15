@@ -1296,11 +1296,14 @@ document.addEventListener("click",e=>{if(!menu.contains(e.target))menu.style.dis
 function kapat(){
   clearTimeout(t);
   document.documentElement.style.setProperty("--kb", "0px");
+
   setTimeout(function(){
     window.dispatchEvent(new Event("resize"));
+    window.scrollTo(0, document.body.scrollHeight);
+
     const m = document.getElementById("messages");
     if(m) m.scrollTop = m.scrollHeight;
-  }, 300);
+  }, 350);
 }
 
 </script>
