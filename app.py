@@ -267,16 +267,37 @@ button{cursor:pointer}
  #newBtn{font-size:12px;padding:9px}
 }
 </style>
+<style>
+#top{border-bottom:0;background:transparent;min-height:calc(60px + var(--st))}
+.brand{display:none}
+#menuBtn,.pill{background:#2a2a2a;border:1px solid #3a3a3a}
+#menuBtn{width:44px;height:44px}
+.pill{height:44px;border-radius:24px;padding:0 4px;gap:0}
+.pill .iconbtn{width:40px;height:40px}
+#top #newBtn{border:0;padding:0;border-radius:50%;font-size:22px;background:transparent}
+#moreMenu{display:none;position:fixed;right:12px;top:calc(env(safe-area-inset-top,0px) + 64px);width:min(80vw,300px);background:#2f2f2f;border:1px solid #454545;border-radius:24px;padding:10px;z-index:30;box-shadow:0 12px 40px #000a}
+#moreMenu .mtitle{color:#9a9a9a;padding:12px 14px 8px;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.menuitem.danger{color:#ff6b6b}
+.menuitem.danger svg{color:#ff6b6b}
+#dlg{position:fixed;inset:0;background:#000a;z-index:40;display:flex;align-items:center;justify-content:center}
+#dlg .box{background:#2f2f2f;border-radius:20px;padding:18px;width:min(86vw,360px)}
+#dlg h3{margin:0 0 10px;font-size:18px}
+#dlg p{white-space:pre-wrap;color:#ccc;line-height:1.6;margin:0 0 12px;max-height:50vh;overflow:auto}
+#dlg input{width:100%;padding:11px;border-radius:12px;border:1px solid #555;background:#212121;color:#fff;font-size:16px;margin-bottom:12px}
+#dlg .row{display:flex;gap:8px;justify-content:flex-end}
+#dlg button{border:0;border-radius:20px;padding:10px 18px;background:#444;font-size:15px}
+#dlg .okb{background:#f4f4f4;color:#222}
+</style>
 </head>
 
 <body>
 <div id="app">
 <header id="top">
- <div class="topgroup">
-  <button class="iconbtn" id="menuBtn" aria-label="Menü">☰</button>
-  <div class="brand">AI Asistan<small>Metin · Fotoğraf · Ses · Dosya</small></div>
+ <div class="topgroup"><button class="iconbtn" id="menuBtn" aria-label="Menü"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 9h16M4 15h10"/></svg></button></div>
+ <div class="topgroup pill">
+  <button class="iconbtn" id="newBtn" aria-label="Yeni sohbet"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-6"/><path d="M18.5 2.5a2.1 2.1 0 0 1 3 3L12 15l-4 1 1-4z"/></svg></button>
+  <button class="iconbtn" id="moreBtn" aria-label="Diğer"><svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/></svg></button>
  </div>
- <div class="topgroup"><button id="newBtn">＋ Yeni sohbet</button></div>
 </header>
 
 <div id="layout">
@@ -433,10 +454,10 @@ function saveHistory() {
 function renderHistory() {
  $("history").replaceChildren();
 
- historyList.forEach(item => {
+ [...historyList].filter(x => !x.archived).sort((x, y) => (y.pinned ? 1 : 0) - (x.pinned ? 1 : 0)).forEach(item => {
   const b = document.createElement("button");
   b.className = "chatitem";
-  b.textContent = "▢　" + item.title;
+  b.textContent = (item.pinned ? "📌 " : "▢ ") + (item.project ? "[" + item.project + "] " : "") + item.title;
 
   b.onclick = () => {
    activeId = item.id;
@@ -1108,6 +1129,115 @@ window.addEventListener("orientationchange", fitViewport);
 
 fitViewport();
 
+</script>
+<script>
+(function(){
+const $=id=>document.getElementById(id);
+const svg=d=>'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'+d+'</svg>';
+const ITEMS=[
+ ["share","Paylaş",'<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4"/>'],
+ ["pin","Sabitle",'<path d="M12 17v5M9 3h6l-1 6 4 4H6l4-4z"/>'],
+ ["project","Projeye ekle",'<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 11v4M10 13h4"/>'],
+ ["files","Yüklenen dosyalar",'<path d="M21 11l-8.5 8.5a5 5 0 0 1-7-7L14 4a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4L15 7"/>'],
+ ["find","Sohbette bul",'<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>'],
+ ["home","Ana ekrana ekle",'<path d="M3 11l9-8 9 8M5 10v10h5v-6h4v6h5V10"/>'],
+ ["archive","Arşivle",'<rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8M10 12h4"/>'],
+ ["del","Sil",'<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/>']
+];
+const menu=document.createElement("div");menu.id="moreMenu";
+const mt=document.createElement("div");mt.className="mtitle";menu.appendChild(mt);
+ITEMS.forEach(([k,label,ic])=>{
+ const d=document.createElement("div");
+ d.className="menuitem"+(k==="del"?" danger":"");d.dataset.k=k;
+ d.innerHTML=svg(ic)+'<span>'+label+'</span>';
+ menu.appendChild(d);
+});
+document.body.appendChild(menu);
+
+function dialog(title,msg,opt,cb){
+ const o=document.createElement("div");o.id="dlg";
+ const b=document.createElement("div");b.className="box";
+ const h=document.createElement("h3");h.textContent=title;b.appendChild(h);
+ if(msg){const p=document.createElement("p");p.textContent=msg;b.appendChild(p);}
+ let inp=null;
+ if(opt.input){inp=document.createElement("input");inp.value=opt.def||"";b.appendChild(inp);}
+ const row=document.createElement("div");row.className="row";
+ const no=document.createElement("button");no.textContent="Kapat";
+ const ok=document.createElement("button");ok.textContent=opt.ok||"Tamam";ok.className="okb";
+ const close=()=>o.remove();
+ no.onclick=close;o.onclick=e=>{if(e.target===o)close()};
+ ok.onclick=()=>{const v=inp?inp.value.trim():true;close();if(cb)cb(v)};
+ if(opt.noOk)row.append(no);else row.append(no,ok);
+ b.appendChild(row);o.appendChild(b);document.body.appendChild(o);
+ if(inp)setTimeout(()=>inp.focus(),50);
+}
+const cur=()=>historyList.find(x=>x.id===activeId);
+function persist(){try{localStorage.setItem(HISTKEY,JSON.stringify(historyList))}catch(e){}renderHistory();}
+
+let dp=null;
+window.addEventListener("beforeinstallprompt",e=>{e.preventDefault();dp=e;});
+
+const A={
+ share(){
+  if(!conversation.length)return toast("Paylaşılacak sohbet yok.");
+  const text=conversation.map(m=>(m.role==="user"?"Ben: ":"AI: ")+m.content).join("\n\n");
+  if(navigator.share){navigator.share({title:"AI Asistan sohbeti",text}).catch(()=>{});}
+  else{
+   try{navigator.clipboard.writeText(text);toast("Sohbet kopyalandı.");}
+   catch(e){toast("Paylaşım desteklenmiyor.");}
+  }
+ },
+ pin(){const it=cur();if(!it)return toast("Önce bir sohbet başlat.");it.pinned=!it.pinned;persist();toast(it.pinned?"Sabitlendi.":"Sabitleme kaldırıldı.");},
+ project(){
+  const it=cur();if(!it)return toast("Önce bir sohbet başlat.");
+  dialog("Projeye ekle","Proje adı (boş bırakırsan projeden çıkar):",{input:true,def:it.project||""},v=>{it.project=v;persist();toast(v?"Projeye eklendi.":"Projeden çıkarıldı.");});
+ },
+ files(){
+  const list=[];
+  conversation.forEach(m=>{if(m.role==="user")String(m.content).split("\n").forEach(l=>{if(l.startsWith("Dosya: "))list.push(l.slice(7));});});
+  if(!list.length)return toast("Bu sohbette yüklenen dosya yok.");
+  dialog("Yüklenen dosyalar",list.join("\n"),{noOk:true});
+ },
+ find(){
+  if(!conversation.length)return toast("Aranacak sohbet yok.");
+  dialog("Sohbette bul","",{input:true,ok:"Ara"},q=>{
+   if(!q)return;
+   const b=[...messagesEl.querySelectorAll(".bubble")].find(x=>x.textContent.toLowerCase().includes(q.toLowerCase()));
+   if(!b)return toast("Bulunamadı.");
+   b.scrollIntoView({block:"center"});
+   b.style.outline="2px solid #7da4ff";
+   setTimeout(()=>b.style.outline="",2500);
+  });
+ },
+ home(){
+  if(dp){dp.prompt();dp=null;}
+  else toast("Tarayıcı menüsünden 'Ana ekrana ekle' seç.");
+ },
+ archive(){const it=cur();if(!it)return toast("Önce bir sohbet başlat.");it.archived=true;persist();newChat();toast("Arşivlendi.");},
+ del(){
+  const it=cur();if(!it)return toast("Önce bir sohbet başlat.");
+  dialog("Sohbeti sil","Bu sohbet kalıcı olarak silinecek.",{ok:"Sil"},()=>{
+   const i=historyList.indexOf(it);if(i>-1)historyList.splice(i,1);
+   persist();newChat();toast("Silindi.");
+  });
+ }
+};
+menu.onclick=e=>{
+ const k=e.target.closest(".menuitem")?.dataset.k;
+ if(!k)return;
+ menu.style.display="none";
+ A[k]();
+};
+$("moreBtn").onclick=e=>{
+ e.stopPropagation();
+ if(menu.style.display==="block"){menu.style.display="none";return;}
+ const it=cur();
+ mt.textContent=(it&&it.title)||"Yeni sohbet";
+ menu.querySelector('[data-k="pin"] span').textContent=(it&&it.pinned)?"Sabitlemeyi kaldır":"Sabitle";
+ menu.style.display="block";
+};
+document.addEventListener("click",e=>{if(!menu.contains(e.target))menu.style.display="none";});
+})();
 </script>
 </body>
 </html>'''
