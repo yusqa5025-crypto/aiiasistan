@@ -201,14 +201,25 @@ button{cursor:pointer}
  display:flex;align-items:center;flex-wrap:wrap;gap:5px;
  margin-top:10px;padding-top:4px;position:relative
 }
-.msg-action{
- min-width:32px;height:32px;padding:0 9px;border:0;
- border-radius:8px;background:transparent;color:var(--muted);
- font-size:13px;font-weight:400;cursor:pointer;
- transition:background .15s ease
+.message-actions{
+ display:flex;align-items:center;gap:4px;flex-wrap:wrap;
+ margin-top:10px;padding-top:4px;position:relative
 }
-.msg-action:hover,.msg-action.active{
- background:var(--hover);color:var(--muted)
+.msg-action{
+ display:inline-flex;align-items:center;justify-content:center;
+ min-width:32px;height:32px;padding:0 8px;border:0;
+ border-radius:9px;background:transparent;color:var(--muted);
+ font-size:15px;font-weight:400;cursor:pointer;
+ transition:background .18s ease,color .18s ease,transform .18s ease;
+ -webkit-tap-highlight-color:transparent
+}
+.msg-action:active{transform:scale(.94)}
+.msg-action:hover{background:var(--hover)}
+.msg-action.flash{animation:actionFlash 1.5s ease-out}
+.msg-action.active{background:var(--hover);color:var(--text)}
+@keyframes actionFlash{
+ 0%{background:rgba(150,150,150,.28)}
+ 100%{background:transparent}
 }
 .msg-more-menu{
  position:absolute;right:0;bottom:38px;z-index:30;
@@ -705,7 +716,7 @@ async function speakMessageText(text, btn) {
   if (synth.speaking) {
    synth.cancel();
    btn.dataset.playing = "";
-   btn.textContent = "🔊 Sesli dinle";
+   btn.textContent = "◖))";
    return;
   }
 
@@ -725,11 +736,11 @@ async function speakMessageText(text, btn) {
    };
    utterance.onend = () => {
     btn.dataset.playing = "";
-    btn.textContent = "🔊 Sesli dinle";
+    btn.textContent = "◖))";
    };
    utterance.onerror = () => {
     btn.dataset.playing = "";
-    btn.textContent = "🔊 Sesli dinle";
+    btn.textContent = "◖))";
     toast("Seslendirme başlatılamadı.");
    };
 
@@ -771,11 +782,17 @@ function addSpeechButton(bubble, text) {
   b.textContent = label;
   b.title = title;
   b.setAttribute("aria-label", title);
-  b.onclick = callback;
+  b.onclick = () => {
+   b.classList.remove("flash");
+   void b.offsetWidth;
+   b.classList.add("flash");
+   setTimeout(() => b.classList.remove("flash"), 1500);
+   callback();
+  };
   return b;
  }
 
- const copyBtn = makeButton("Kopyala", "Yanıtı kopyala", async () => {
+ const copyBtn = makeButton("▢", "Yanıtı kopyala", async () => {
   try {
    await copyMessageText(text);
    toast("Yanıt kopyalandı.");
@@ -784,32 +801,32 @@ function addSpeechButton(bubble, text) {
   }
  });
 
- const likeBtn = makeButton("Beğen", "Yanıtı beğen", () => {
+ const likeBtn = makeButton("♧", "Yanıtı beğen", () => {
   const active = likeBtn.classList.contains("active");
   likeBtn.classList.toggle("active", !active);
   dislikeBtn.classList.remove("active");
   toast(active ? "Beğeni kaldırıldı." : "Geri bildirimin alındı.");
  });
 
- const dislikeBtn = makeButton("Beğenme", "Yanıtı beğenme", () => {
+ const dislikeBtn = makeButton("♧", "Yanıtı beğenme", () => {
   const active = dislikeBtn.classList.contains("active");
   dislikeBtn.classList.toggle("active", !active);
   likeBtn.classList.remove("active");
   toast(active ? "Geri bildirim kaldırıldı." : "Geri bildirimin alındı.");
  });
 
- const speakBtn = makeButton("Sesli dinle", "Yanıtı sesli dinle", () => {
+ const speakBtn = makeButton("◖))", "Yanıtı sesli dinle", () => {
   speakMessageText(text, speakBtn);
  });
 
- const shareBtn = makeButton("Paylaş", "Yanıtı paylaş", () => {
+ const shareBtn = makeButton("↗", "Yanıtı paylaş", () => {
   shareMessageText(text);
  });
 
  const moreWrap = document.createElement("div");
  moreWrap.className = "msg-more-wrap";
 
- const moreBtn = makeButton("Daha fazla", "Diğer işlemler", () => {
+ const moreBtn = makeButton("⋯", "Diğer işlemler", () => {
   const open = menu.style.display !== "none";
   menu.style.display = open ? "none" : "flex";
  });
@@ -843,7 +860,7 @@ function addSpeechButton(bubble, text) {
  menuItem("Seslendirmeyi durdur", () => {
   if (window.speechSynthesis) window.speechSynthesis.cancel();
   speakBtn.dataset.playing = "";
-  speakBtn.textContent = "Sesli dinle";
+  speakBtn.textContent = "◖))";
   toast("Seslendirme durduruldu.");
  });
 
@@ -867,8 +884,8 @@ function bindCopy(bubble) {
     t.remove();
    }
 
-   btn.textContent = "Kopyalandı";
-   setTimeout(() => btn.textContent = "Kopyala", 1500);
+   btn.textContent = "✓";
+   setTimeout(() => btn.textContent = "▢", 1500);
   };
  });
 }
