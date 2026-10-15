@@ -53,6 +53,7 @@ Sorular da isteniyorsa önce tam çeviriyi, ardından bütün soruların numaral
 Kullanıcının istediği dile sadık kal.
 Okunamayan bölümleri açıkça belirt ve okunabilen bölümleri çevirmeye devam et.
 Görselde olmayan bilgileri uydurma.
+Test soruları varsa her soruyu dilbilgisi kurallarına göre dikkatle çöz, şıkları tek tek değerlendir ve sonda 'Numara: Şık' listesi ver.
 """
 def groq_headers():
     key = request.headers.get("X-Groq-Key", "").strip() or API_KEY
@@ -1013,6 +1014,37 @@ def sohbet():
                     },
                 ]
                 model = VISION_MODEL
+                try:
+                    ocr = requests.post(
+                        f"{API_URL}/chat/completions",
+                        headers={
+                            **groq_headers(),
+                            "Content-Type": "application/json",
+                        },
+                        json={
+                            "model": VISION_MODEL,
+                            "messages": [{
+                                "role": "user",
+                                "content": [
+                                    {"type": "text", "text": "Bu fotoğraftaki bütün yazıyı, soru numaralarını ve A-E şıklarını AYNEN, sırayla yaz. Çözme, yorum yapma. Şıklarda daire içine alınmış işaretleri yok say. Okunamayanı [okunamadı] diye belirt."},
+                                    {"type": "image_url", "image_url": {"url": f"data:{attachment['mime']};base64,{attachment['data']}"}},
+                                ],
+                            }],
+                            "temperature": 0,
+                            "max_tokens": 4000,
+                        },
+                        timeout=120,
+                    )
+                    ocr_text = ocr.json()["choices"][0]["message"]["content"].strip()
+                    if ocr.status_code == 200 and ocr_text:
+                        user_content = (
+                            user_content[0]["text"]
+                            + "\n\n--- FOTOĞRAFTAN OKUNAN METİN ---\n"
+                            + ocr_text
+                        )
+                        model = MODEL
+                except Exception:
+                    pass
 
             else:
                 user_content += "\n\n" + attachment["text"]
@@ -1026,7 +1058,7 @@ def sohbet():
             m for m in YEDEK_MODELLER if m != model
         ]
 
-        if attachment and attachment["type"] == "image":
+        if attachment and attachment["type"] == "image" and model == VISION_MODEL:
             adaylar = [model]
 
         r = None
