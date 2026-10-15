@@ -261,6 +261,7 @@ button{cursor:pointer}
  #welcome h1{font-size:24px}
  #newBtn{font-size:12px;padding:9px}
 }
+#top{--st:var(--safe-area-inset-top,env(safe-area-inset-top,0px));padding-top:var(--st);height:auto;min-height:calc(64px + var(--st))}
 </style>
 </head>
 
