@@ -1134,6 +1134,7 @@ if (window.visualViewport) {
 
 window.addEventListener("resize", fitViewport);
 window.addEventListener("orientationchange", fitViewport);
+window.addEventListener("focusout", () => setTimeout(fitViewport, 250));
 
 fitViewport();
 
@@ -1276,37 +1277,7 @@ document.addEventListener("click",e=>{if(!menu.contains(e.target))menu.style.dis
  guncelle();
 })();
 </script>
-<script>
-(function(){
- const e = document.getElementById("entry");
- const H0 = window.innerHeight;
- let t = null;
- function ac(){
-  clearTimeout(t);
-  t = setTimeout(function(){
-   const kuculdu = window.innerHeight < H0 - 120 ||
-     (window.visualViewport && window.visualViewport.height < H0 - 120);
-   if (!kuculdu && document.activeElement === e) {
-    document.documentElement.style.setProperty("--kb", Math.round(H0 * 0.36) + "px");
-    const m = document.getElementById("messages");
-    m.scrollTop = m.scrollHeight;
-   }
-  }, 450);
- }
-function kapat(){
-  clearTimeout(t);
-  document.documentElement.style.setProperty("--kb", "0px");
 
-  setTimeout(function(){
-    window.dispatchEvent(new Event("resize"));
-    window.scrollTo(0, document.body.scrollHeight);
-
-    const m = document.getElementById("messages");
-    if(m) m.scrollTop = m.scrollHeight;
-  }, 350);
-}
-
-</script>
 </body>
 </html>'''
 
