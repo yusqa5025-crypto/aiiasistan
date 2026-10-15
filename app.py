@@ -991,6 +991,8 @@ def sohbet():
                 })
 
         user_content = mesaj or "Eklediğim dosyayı incele ve yardımcı ol."
+        if "çevir" in user_content.lower() or "tercüme" in user_content.lower():
+            user_content += "\n\n(Metnin TAMAMINI eksiksiz çevir. Hiçbir paragrafı veya cümleyi atlama, yarıda bırakma.)"
         model = MODEL
 
         if attachment:
@@ -1033,8 +1035,8 @@ def sohbet():
             govde = {
                 "model": aday,
                 "messages": api_messages,
-                "temperature": 0.7,
-                "max_tokens": 4096,
+                "temperature": 0.3,
+                "max_tokens": 8000,
             }
 
             if aday.startswith("openai/gpt-oss"):
