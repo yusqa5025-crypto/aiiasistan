@@ -195,6 +195,30 @@ button{cursor:pointer}
 .assistant .bubble a{color:#9bbaff}
 .assistant .bubble pre{overflow:auto}
 .assistant .bubble p{margin:8px 0}
+
+.message-actions{
+ display:flex;align-items:center;flex-wrap:wrap;gap:3px;
+ margin-top:12px;padding-top:5px;position:relative
+}
+.msg-action{
+ min-width:34px;height:32px;padding:0 9px;border:0;
+ border-radius:9px;background:transparent;color:var(--muted);
+ font-size:15px;cursor:pointer
+}
+.msg-action:hover,.msg-action.active{background:var(--hover);color:var(--blue)}
+.msg-more-wrap{position:relative}
+.msg-more-menu{
+ position:absolute;right:0;bottom:38px;z-index:30;
+ min-width:190px;padding:5px;gap:2px;flex-direction:column;
+ background:var(--panel);border:1px solid var(--line);
+ border-radius:12px;box-shadow:0 8px 28px #0005
+}
+.msg-more-menu button{
+ border:0;border-radius:8px;background:transparent;color:inherit;
+ text-align:left;padding:11px 12px;white-space:nowrap;cursor:pointer
+}
+.msg-more-menu button:hover{background:var(--hover)}
+
 .assistant .bubble mjx-container{max-width:100%;overflow-x:auto;overflow-y:hidden}
 .codebox{margin:12px 0;border:1px solid #444;border-radius:12px;overflow:hidden;background:#101010}
 .codehead{
@@ -613,33 +637,198 @@ function typesetMath(el, deneme = 0) {
  }
 }
 
-function addSpeechButton(bubble, text) {
- const btn = document.createElement("button");
- btn.className = "speak";
- btn.textContent = "🔊 Sesli dinle";
+async function copyMessageText(text) {
+ try {
+  await navigator.clipboard.writeText(text);
+ } catch (e) {
+  const t = document.createElement("textarea");
+  t.value = text;
+  t.style.position = "fixed";
+  t.style.opacity = "0";
+  document.body.appendChild(t);
+  t.select();
+  const ok = document.execCommand("copy");
+  t.remove();
+  if (!ok) throw new Error("Kopyalanamadı");
+ }
+}
 
- btn.onclick = () => {
-  if (!("speechSynthesis" in window)) {
-   toast("Tarayıcı seslendirmeyi desteklemiyor.");
+async function shareMessageText(text) {
+ if (navigator.share) {
+  try {
+   await navigator.share({title: "AI Asistan yanıtı", text});
+   return;
+  } catch (e) {
+   if (e.name === "AbortError") return;
+  }
+ }
+ try {
+  await copyMessageText(text);
+  toast("Paylaşım desteklenmedi; yanıt kopyalandı.");
+ } catch (e) {
+  toast("Yanıt kopyalanamadı.");
+ }
+}
+
+async function speakMessageText(text, btn) {
+ const temiz = String(text)
+  .replace(/```[\s\S]*?```/g, " Kod bloğu. ")
+  .replace(/[*#`_>]/g, "")
+  .replace(/\n{3,}/g, "\n\n")
+  .trim();
+
+ if (window.speechSynthesis && window.SpeechSynthesisUtterance) {
+  const synth = window.speechSynthesis;
+
+  if (synth.speaking) {
+   synth.cancel();
+   btn.dataset.playing = "";
+   btn.textContent = "🔊 Sesli dinle";
    return;
   }
 
-  speechSynthesis.cancel();
+  try {
+   synth.cancel();
+   const utterance = new SpeechSynthesisUtterance(temiz);
+   utterance.lang = "tr-TR";
+   utterance.rate = 1;
 
-  const temiz = text
-   .replace(/```[\s\S]*?```/g, " kod bloğu ")
-   .replace(/[*#`_>]/g, "");
+   const voices = synth.getVoices();
+   const turkceSes = voices.find(v => /^tr([-_]|$)/i.test(v.lang));
+   if (turkceSes) utterance.voice = turkceSes;
 
-  const utterance = new SpeechSynthesisUtterance(temiz);
-  utterance.lang = "tr-TR";
-  utterance.rate = 1;
+   utterance.onstart = () => {
+    btn.dataset.playing = "1";
+    btn.textContent = "⏹ Durdur";
+   };
+   utterance.onend = () => {
+    btn.dataset.playing = "";
+    btn.textContent = "🔊 Sesli dinle";
+   };
+   utterance.onerror = () => {
+    btn.dataset.playing = "";
+    btn.textContent = "🔊 Sesli dinle";
+    toast("Seslendirme başlatılamadı.");
+   };
 
-  speechSynthesis.speak(utterance);
- };
+   synth.speak(utterance);
+   setTimeout(() => {
+    if (!synth.speaking && !synth.pending) {
+     synth.cancel();
+     synth.speak(utterance);
+    }
+   }, 250);
 
- bubble.appendChild(btn);
+  } catch (e) {
+   toast("Seslendirme başlatılamadı.");
+  }
+  return;
+ }
+
+ const nativeTTS = window.Capacitor?.Plugins?.TextToSpeech;
+ if (nativeTTS?.speak) {
+  try {
+   await nativeTTS.speak({text: temiz, lang: "tr-TR", rate: 1});
+  } catch (e) {
+   toast("Android seslendirmesi başlatılamadı.");
+  }
+  return;
+ }
+
+ toast("Bu APK'da yerel seslendirme eklentisi gerekiyor.");
 }
 
+function addSpeechButton(bubble, text) {
+ const actions = document.createElement("div");
+ actions.className = "message-actions";
+
+ function makeButton(label, title, callback) {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = "msg-action";
+  b.textContent = label;
+  b.title = title;
+  b.setAttribute("aria-label", title);
+  b.onclick = callback;
+  return b;
+ }
+
+ const copyBtn = makeButton("▢", "Yanıtı kopyala", async () => {
+  try {
+   await copyMessageText(text);
+   toast("Yanıt kopyalandı.");
+  } catch (e) {
+   toast("Kopyalanamadı.");
+  }
+ });
+
+ const likeBtn = makeButton("👍", "Yanıtı beğen", () => {
+  const active = likeBtn.classList.contains("active");
+  likeBtn.classList.toggle("active", !active);
+  dislikeBtn.classList.remove("active");
+  toast(active ? "Beğeni kaldırıldı." : "Geri bildirimin alındı.");
+ });
+
+ const dislikeBtn = makeButton("👎", "Yanıtı beğenme", () => {
+  const active = dislikeBtn.classList.contains("active");
+  dislikeBtn.classList.toggle("active", !active);
+  likeBtn.classList.remove("active");
+  toast(active ? "Geri bildirim kaldırıldı." : "Geri bildirimin alındı.");
+ });
+
+ const speakBtn = makeButton("🔊", "Yanıtı sesli dinle", () => {
+  speakMessageText(text, speakBtn);
+ });
+
+ const shareBtn = makeButton("↗", "Yanıtı paylaş", () => {
+  shareMessageText(text);
+ });
+
+ const moreWrap = document.createElement("div");
+ moreWrap.className = "msg-more-wrap";
+
+ const moreBtn = makeButton("⋯", "Diğer işlemler", () => {
+  const open = menu.style.display !== "none";
+  menu.style.display = open ? "none" : "flex";
+ });
+
+ const menu = document.createElement("div");
+ menu.className = "msg-more-menu";
+ menu.style.display = "none";
+
+ function menuItem(label, callback) {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.textContent = label;
+  b.onclick = () => {
+   menu.style.display = "none";
+   callback();
+  };
+  menu.appendChild(b);
+ }
+
+ menuItem("Yanıtı kopyala", async () => {
+  try {
+   await copyMessageText(text);
+   toast("Yanıt kopyalandı.");
+  } catch (e) {
+   toast("Kopyalanamadı.");
+  }
+ });
+
+ menuItem("Yanıtı paylaş", () => shareMessageText(text));
+
+ menuItem("Seslendirmeyi durdur", () => {
+  if (window.speechSynthesis) window.speechSynthesis.cancel();
+  speakBtn.dataset.playing = "";
+  speakBtn.textContent = "🔊";
+  toast("Seslendirme durduruldu.");
+ });
+
+ moreWrap.append(moreBtn, menu);
+ actions.append(copyBtn, likeBtn, dislikeBtn, speakBtn, shareBtn, moreWrap);
+ bubble.appendChild(actions);
+}
 function bindCopy(bubble) {
  bubble.querySelectorAll(".copy").forEach(btn => {
   btn.onclick = async () => {
