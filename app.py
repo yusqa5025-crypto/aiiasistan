@@ -779,20 +779,47 @@ messagesEl.appendChild(welcomeEl());
 renderHistory();
 
 /* Klavye açılınca uygulamayı görünür alana sığdır */
+/* Android klavyesi için görünür alanı takip et */
 function fitViewport() {
- const v = window.visualViewport;
- const app = $("app");
- const h = v ? v.height : window.innerHeight;
- const t = v ? v.offsetTop : 0;
- app.style.height = h + "px";
- app.style.top = t + "px";
+  const app = document.getElementById("app");
+  const main = document.getElementById("main");
+  const composer = document.getElementById("composerWrap");
+  const viewport = window.visualViewport;
+
+  const height = viewport
+    ? viewport.height
+    : window.innerHeight;
+
+  const offsetTop = viewport
+    ? viewport.offsetTop
+    : 0;
+
+  app.style.top = offsetTop + "px";
+  app.style.height = height + "px";
+  app.style.bottom = "auto";
+
+  if (main) {
+    main.style.minHeight = "0";
+    main.style.overflow = "hidden";
+  }
+
+  if (composer) {
+    composer.style.flexShrink = "0";
+    composer.style.position = "relative";
+    composer.style.visibility = "visible";
+  }
 }
+
 if (window.visualViewport) {
- visualViewport.addEventListener("resize", () => { fitViewport(); scrollBottom(); });
- visualViewport.addEventListener("scroll", fitViewport);
+  window.visualViewport.addEventListener("resize", fitViewport);
+  window.visualViewport.addEventListener("scroll", fitViewport);
 }
+
 window.addEventListener("resize", fitViewport);
+window.addEventListener("orientationchange", fitViewport);
+
 fitViewport();
+
 </script>
 </body>
 </html>'''
