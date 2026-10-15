@@ -1,10 +1,10 @@
 import os
 import io
+import re
 import json
 import base64
 import mimetypes
 import socket
-import subprocess
 import requests
 
 from flask import Flask, request, jsonify, Response
@@ -31,33 +31,59 @@ API_KEY = os.environ.get("GROQ_API_KEY", "").strip().strip("\"'")
 API_URL = "https://api.groq.com/openai/v1"
 SIFRE = os.environ.get("APP_SIFRE", "")
 HOST = os.environ.get("HOST", "0.0.0.0")
+PORT = int(os.environ.get("PORT", "5000"))
 
 MODEL = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
-VISION_MODEL = os.environ.get(
-    "GROQ_VISION_MODEL",
-    "qwen/qwen3.8-27b",
-)
+VISION_MODEL = os.environ.get("GROQ_VISION_MODEL", "qwen/qwen3.8-27b")
+
+# Fotoğraf okumada sırayla denenir; ilki yoksa/limitliyse sıradakine geçer
+VISION_MODELLER = []
+for _m in (
+    VISION_MODEL,
+    "meta-llama/llama-4-scout-17b-16e-instruct",
+    "meta-llama/llama-4-maverick-17b-128e-instruct",
+):
+    if _m and _m not in VISION_MODELLER:
+        VISION_MODELLER.append(_m)
+
 YEDEK_MODELLER = [
     "llama-3.3-70b-versatile",
     "llama-3.1-8b-instant",
 ]
 
-SISTEM = """Her zaman kullanıcının istediği dilde cevap ver.
-Kullanıcı bir metnin tamamını çevirmemi istiyorsa ilk cümleden son cümleye kadar tamamını çevir.
-Yalnızca ilk paragrafı veya ilk cümleyi çevirip durma.
-Fotoğraftaki bütün sayfaları, paragrafları, başlıkları ve soruları sırayla işle.
-Metni özetleme, kısaltma veya cümle atlama.
-Çeviri tamamlanmadan cevabı bitirme.
-Metin uzunsa mümkün olduğunca tamamını tek cevapta ver.
-Sorular da isteniyorsa önce tam çeviriyi, ardından bütün soruların numaralı cevaplarını ver.
-Kullanıcının istediği dile sadık kal.
-Okunamayan bölümleri açıkça belirt ve okunabilen bölümleri çevirmeye devam et.
-Görselde olmayan bilgileri uydurma.
-Test soruları varsa her soruyu dilbilgisi kurallarına göre dikkatle çöz, şıkları tek tek değerlendir ve sonda 'Numara: Şık' listesi ver.
+SISTEM = """Her zaman kullanıcının yazdığı dilde cevap ver.
+Görselde veya metinde olmayan bilgiyi uydurma. Okunamayan veya kesik yerleri açıkça belirt.
+
+ÇEVİRİ: Çeviri istenirse ilk cümleden sona kadar TAMAMINI çevir, özetleme, cümle atlama.
+
+TEST / SORU ÇÖZME:
+- Her soruyu ayrı ayrı, kendi numarasıyla çöz. Soru numarası uydurma, yalnızca verilen numaraları kullan.
+- Önce verilenleri yaz, sonra doğru formülü seç, birimleri kontrol ederek hesapla, sonra sonucu şıklarla karşılaştır.
+- Fizik/matematikte sonucu mutlaka şıklarla eşleştir. Hiçbir şık tutmuyorsa hesabını tekrar kontrol et.
+- Kağıt üzerindeki kalem işaretlerini (daire, çarpı, çizgi) öğrencinin cevabı say ve ona güvenme. Soruyu bağımsız çöz.
+- Şekil/grafik açıklaması varsa ona göre hesapla. Şekil eksik veya kesikse tahmin yürütme, o soruyu "şekil eksik" diye belirt.
+- Son bölümde tablo KULLANMA, yalnızca şu biçimde düz liste ver:
+Numara: Şık
+- Emin olmadığın soruyu belirt, tahmin ettiğini söyle.
 """
+
+
 def groq_headers():
     key = request.headers.get("X-Groq-Key", "").strip() or API_KEY
     return {"Authorization": f"Bearer {key}"}
+
+
+def groq_chat(body, timeout=120):
+    return requests.post(
+        f"{API_URL}/chat/completions",
+        headers={**groq_headers(), "Content-Type": "application/json"},
+        json=body,
+        timeout=timeout,
+    )
+
+
+def model_hatasi(r):
+    return r.status_code in (400, 404) and "model" in r.text.lower()
 
 
 @app.before_request
@@ -79,7 +105,7 @@ HTML = r'''<!DOCTYPE html>
 <html lang="tr">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover,interactive-widget=resizes-visual">
 <meta name="theme-color" content="#212121">
 <title>AI Asistan</title>
 
@@ -92,37 +118,33 @@ window.MathJax = {
   options: {
     skipHtmlTags: ['script','noscript','style','textarea','pre','code']
   },
-  startup: {
-    typeset: false
-  }
+  startup: { typeset: false }
 };
 </script>
 <script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
 
 <style>
 :root{
- --bg:#212121;
- --panel:#171717;
- --hover:#303030;
- --text:#f4f4f4;
- --muted:#aaa;
- --line:#414141;
- --blue:#7da4ff;
- --user:#303030;
+ --bg:#212121;--panel:#171717;--hover:#303030;--text:#f4f4f4;
+ --muted:#aaa;--line:#414141;--blue:#7da4ff;--user:#303030;
 }
 *{box-sizing:border-box}
+html,body{height:100%;margin:0;overflow:hidden;overscroll-behavior:none}
 body{
- margin:0;background:var(--bg);color:var(--text);
- font-family:system-ui,-apple-system,sans-serif;
- height:100dvh;overflow:hidden
+ background:var(--bg);color:var(--text);
+ font-family:system-ui,-apple-system,sans-serif
 }
 button,textarea{font:inherit;color:inherit}
 button{cursor:pointer}
-#app{height:var(--vh,100dvh);display:flex;flex-direction:column}
+#app{
+ position:fixed;left:0;right:0;top:0;height:100dvh;
+ display:flex;flex-direction:column;background:var(--bg)
+}
 #top{
- height:64px;flex-shrink:0;display:flex;align-items:center;
- justify-content:space-between;padding:0 12px;
- border-bottom:1px solid #333
+ flex-shrink:0;display:flex;align-items:center;justify-content:space-between;
+ padding:0 12px;border-bottom:1px solid #333;
+ --st:env(safe-area-inset-top,0px);padding-top:var(--st);
+ min-height:calc(64px + var(--st))
 }
 .topgroup{display:flex;align-items:center;gap:8px}
 .iconbtn{
@@ -131,9 +153,7 @@ button{cursor:pointer}
 }
 .iconbtn:hover,.tool:hover{background:var(--hover)}
 .brand{font-weight:650;font-size:17px}
-.brand small{
- display:block;font-weight:400;color:var(--muted);font-size:12px
-}
+.brand small{display:block;font-weight:400;color:var(--muted);font-size:12px}
 #newBtn{
  background:transparent;border:1px solid var(--line);
  border-radius:24px;padding:10px 12px;font-size:13px
@@ -152,13 +172,9 @@ button{cursor:pointer}
 #history{display:flex;flex-direction:column;gap:4px;overflow-y:auto}
 .chatitem{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #shade{display:none}
-#main{
- flex:1;min-width:0;display:flex;flex-direction:column;position:relative
-}
+#main{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;position:relative}
 #messages{flex:1;min-height:0;overflow-y:auto;padding:20px 16px}
-#welcome{
- max-width:580px;margin:24vh auto 0;text-align:center;padding:12px
-}
+#welcome{max-width:580px;margin:18vh auto 0;text-align:center;padding:12px}
 #welcome h1{font-size:27px;font-weight:600;line-height:1.35}
 #welcome p{color:var(--muted);line-height:1.7}
 .msgrow{display:flex;gap:10px;max-width:800px;margin:0 auto 22px}
@@ -174,30 +190,22 @@ button{cursor:pointer}
  display:grid;place-items:center;background:#303030;
  color:#c6d8ff;font-size:12px;font-weight:700
 }
-.assistant .bubble h1,
-.assistant .bubble h2,
-.assistant .bubble h3{color:var(--blue)}
+.assistant .bubble h1,.assistant .bubble h2,.assistant .bubble h3{color:var(--blue)}
 .assistant .bubble strong{color:#a9c2ff}
 .assistant .bubble a{color:#9bbaff}
 .assistant .bubble pre{overflow:auto}
 .assistant .bubble p{margin:8px 0}
 .assistant .bubble mjx-container{max-width:100%;overflow-x:auto;overflow-y:hidden}
-.codebox{
- margin:12px 0;border:1px solid #444;border-radius:12px;
- overflow:hidden;background:#101010
-}
+.codebox{margin:12px 0;border:1px solid #444;border-radius:12px;overflow:hidden;background:#101010}
 .codehead{
  display:flex;align-items:center;justify-content:space-between;
  padding:8px 12px;background:#292929;font-size:12px;color:#ccc
 }
-.copy,.speak{
- background:#393939;border:0;border-radius:8px;
- padding:6px 10px;font-size:12px;margin:3px
-}
+.copy,.speak{background:#393939;border:0;border-radius:8px;padding:6px 10px;font-size:12px;margin:3px}
 .codebox pre{margin:0;padding:14px;overflow-x:auto;font-size:13px}
 .codebox code{font-family:ui-monospace,monospace}
 #composerWrap{
- width:100%;max-width:850px;margin:0 auto;
+ flex-shrink:0;width:100%;max-width:850px;margin:0 auto;
  padding:8px 12px max(12px,env(safe-area-inset-bottom))
 }
 #preview{
@@ -205,10 +213,7 @@ button{cursor:pointer}
  border-radius:12px;margin-bottom:8px;font-size:13px
 }
 #removeFile{float:right;background:none;border:0;font-size:20px}
-#composer{
- border:1px solid #454545;border-radius:27px;
- background:#303030;padding:8px 9px
-}
+#composer{border:1px solid #454545;border-radius:27px;background:#303030;padding:8px 9px}
 #entry{
  display:block;width:100%;min-height:36px;max-height:150px;
  resize:none;outline:none;border:0;background:transparent;color:white;
@@ -254,15 +259,12 @@ button{cursor:pointer}
   transform:translateX(-105%);transition:transform .2s
  }
  #sidebar.open{transform:translateX(0);box-shadow:12px 0 40px #0008}
- #shade.show{
-  display:block;position:absolute;inset:0;background:#0008;z-index:4
- }
+ #shade.show{display:block;position:absolute;inset:0;background:#0008;z-index:4}
  #messages{padding:18px 14px}
- #welcome{margin-top:20vh}
+ #welcome{margin-top:12vh}
  #welcome h1{font-size:24px}
  #newBtn{font-size:12px;padding:9px}
 }
-#top{--st:var(--safe-area-inset-top,env(safe-area-inset-top,0px));padding-top:var(--st);height:auto;min-height:calc(64px + var(--st))}
 </style>
 </head>
 
@@ -329,6 +331,7 @@ button{cursor:pointer}
    <input id="micInput" type="file" accept="audio/*" capture>
   </div>
  </main>
+</div>
 </div>
 <div id="toast"></div>
 
@@ -436,9 +439,7 @@ function renderHistory() {
    activeId = item.id;
    conversation = JSON.parse(JSON.stringify(item.messages || []));
    messagesEl.replaceChildren();
-
    conversation.forEach(m => renderMessage(m.role, m.content, false));
-
    closeMenus();
    scrollBottom();
   };
@@ -448,12 +449,8 @@ function renderHistory() {
 }
 
 $("menuBtn").onclick = () => {
- if (innerWidth <= 650) {
-  $("sidebar").classList.toggle("open");
-  $("shade").classList.toggle("show");
- } else {
-  $("sidebar").classList.toggle("open");
- }
+ $("sidebar").classList.toggle("open");
+ if (innerWidth <= 650) $("shade").classList.toggle("show");
 };
 
 $("shade").onclick = closeMenus;
@@ -501,6 +498,10 @@ $("removeFile").onclick = () => {
 entry.addEventListener("input", () => {
  entry.style.height = "auto";
  entry.style.height = Math.min(entry.scrollHeight, 150) + "px";
+});
+
+entry.addEventListener("focus", () => {
+ setTimeout(() => { fitViewport(); scrollBottom(); }, 300);
 });
 
 entry.addEventListener("keydown", e => {
@@ -745,9 +746,7 @@ $("mic").onclick = async () => {
     type: recorder.mimeType || "audio/webm"
    });
 
-   selectedFile = new File([blob], "ses-kaydi.webm", {
-    type: blob.type
-   });
+   selectedFile = new File([blob], "ses-kaydi.webm", {type: blob.type});
 
    $("filename").textContent = "🎙 Ses kaydı hazır";
    $("preview").style.display = "block";
@@ -778,22 +777,48 @@ if (!localStorage.getItem("groq_key")) setTimeout(askKey, 600);
 
 messagesEl.appendChild(welcomeEl());
 renderHistory();
-</script>
-<script>
-(function(){
-  var v = window.visualViewport;
-  function f(){
-    var h = v ? v.height : window.innerHeight;
-    document.documentElement.style.setProperty('--vh', h + 'px');
-    window.scrollTo(0, 0);
-  }
-  if (v) { v.addEventListener('resize', f); v.addEventListener('scroll', f); }
-  window.addEventListener('resize', f);
-  f();
-})();
+
+/* Klavye açılınca uygulamayı görünür alana sığdır */
+function fitViewport() {
+ const v = window.visualViewport;
+ const app = $("app");
+ const h = v ? v.height : window.innerHeight;
+ const t = v ? v.offsetTop : 0;
+ app.style.height = h + "px";
+ app.style.top = t + "px";
+}
+if (window.visualViewport) {
+ visualViewport.addEventListener("resize", () => { fitViewport(); scrollBottom(); });
+ visualViewport.addEventListener("scroll", fitViewport);
+}
+window.addEventListener("resize", fitViewport);
+fitViewport();
 </script>
 </body>
 </html>'''
+
+
+def resim_hazirla(raw, heic_mi):
+    """EXIF dönüklüğünü düzeltir, büyük fotoğrafı küçültür, JPEG yapar."""
+    try:
+        from PIL import Image, ImageOps
+
+        try:
+            from pillow_heif import register_heif_opener
+            register_heif_opener()
+        except Exception:
+            pass
+
+        with Image.open(io.BytesIO(raw)) as im:
+            im = ImageOps.exif_transpose(im).convert("RGB")
+            im.thumbnail((2400, 2400))
+            cikti = io.BytesIO()
+            im.save(cikti, format="JPEG", quality=92)
+            return cikti.getvalue(), "image/jpeg", None
+    except Exception as e:
+        if heic_mi:
+            return None, None, str(e)[:250]
+        return raw, None, None
 
 
 def extract_file(file):
@@ -804,55 +829,39 @@ def extract_file(file):
 
     heic_mi = uzanti in (".heic", ".heif") or mime.lower() in (
         "image/heic", "image/heif", "image/heic-sequence",
-        "image/heif-sequence"
+        "image/heif-sequence",
     )
 
     if mime.startswith("image/") or heic_mi:
-        if heic_mi:
-            try:
-                from PIL import Image
-                from pillow_heif import register_heif_opener
+        yeni, yeni_mime, hata = resim_hazirla(raw, heic_mi)
 
-                register_heif_opener()
-                with Image.open(io.BytesIO(raw)) as im:
-                    im = im.convert("RGB")
-                    cikti = io.BytesIO()
-                    im.save(cikti, format="JPEG", quality=92)
-                    raw = cikti.getvalue()
+        if hata:
+            return {
+                "type": "error",
+                "text": f"HEIC fotoğrafı JPEG'e dönüştürülemedi. Detay: {hata}",
+            }
 
-                mime = "image/jpeg"
-                name = os.path.splitext(name)[0] + ".jpg"
-
-            except Exception as e:
-                return {
-                    "type": "error",
-                    "text": (
-                        "HEIC fotoğrafı JPEG'e dönüştürülemedi. "
-                        f"Detay: {str(e)[:250]}"
-                    ),
-                }
+        raw = yeni
+        if yeni_mime:
+            mime = yeni_mime
+            name = os.path.splitext(name)[0] + ".jpg"
 
         return {
             "type": "image",
-            "mime": mime,
+            "mime": mime or "image/jpeg",
             "data": base64.b64encode(raw).decode("ascii"),
             "name": name,
         }
 
     ses_uzantilari = (
         ".wav", ".mp3", ".m4a", ".ogg", ".webm",
-        ".flac", ".mpga", ".aac", ".amr", ".3gp"
+        ".flac", ".mpga", ".aac", ".amr", ".3gp",
     )
 
     if mime.startswith("audio/") or name.lower().endswith(ses_uzantilari):
         try:
-            files = {
-                "file": (name, io.BytesIO(raw), mime or "audio/webm")
-            }
-            data = {
-                "model": "whisper-large-v3-turbo",
-                "response_format": "json",
-            }
+            files = {"file": (name, io.BytesIO(raw), mime or "audio/webm")}
+            data = {"model": "whisper-large-v3-turbo", "response_format": "json"}
 
             r = requests.post(
                 f"{API_URL}/audio/transcriptions",
@@ -871,10 +880,7 @@ def extract_file(file):
             }
 
         except Exception as e:
-            return {
-                "type": "text",
-                "text": f"Ses çözümlenemedi: {e}",
-            }
+            return {"type": "text", "text": f"Ses çözümlenemedi: {e}"}
 
     if name.lower().endswith(".pdf"):
         try:
@@ -882,17 +888,10 @@ def extract_file(file):
 
             reader = PdfReader(io.BytesIO(raw))
             text = "\n".join(p.extract_text() or "" for p in reader.pages)
-
-            return {
-                "type": "text",
-                "text": f"PDF ({name}):\n{text[:25000]}",
-            }
+            return {"type": "text", "text": f"PDF ({name}):\n{text[:25000]}"}
 
         except Exception as e:
-            return {
-                "type": "text",
-                "text": f"PDF okunamadı: {e}",
-            }
+            return {"type": "text", "text": f"PDF okunamadı: {e}"}
 
     if name.lower().endswith(".docx"):
         try:
@@ -904,25 +903,16 @@ def extract_file(file):
 
             root = ElementTree.fromstring(xml)
             text = " ".join(
-                el.text or ""
-                for el in root.iter()
-                if el.tag.endswith("}t")
+                el.text or "" for el in root.iter() if el.tag.endswith("}t")
             )
-
-            return {
-                "type": "text",
-                "text": f"DOCX ({name}):\n{text[:25000]}",
-            }
+            return {"type": "text", "text": f"DOCX ({name}):\n{text[:25000]}"}
 
         except Exception as e:
-            return {
-                "type": "text",
-                "text": f"DOCX okunamadı: {e}",
-            }
+            return {"type": "text", "text": f"DOCX okunamadı: {e}"}
 
     metin_uzantilari = (
         ".txt", ".md", ".csv", ".json", ".py",
-        ".js", ".html", ".css", ".xml", ".log"
+        ".js", ".html", ".css", ".xml", ".log",
     )
 
     if mime.startswith("text/") or name.lower().endswith(metin_uzantilari):
@@ -943,6 +933,59 @@ def extract_file(file):
     }
 
 
+OCR_ISTEM = (
+    "Bu fotoğraftaki bütün yazıyı AYNEN ve sırayla yaz. Çözme, yorum yapma.\n"
+    "- Sayfa iki sütunluysa önce SOL sütunu yukarıdan aşağı, sonra SAĞ sütunu yaz.\n"
+    "- Her sorunun numarasını, soru metnini ve A-E şıklarını olduğu gibi yaz. "
+    "Soru numarası uydurma, yalnızca görünenleri yaz.\n"
+    "- Şekil, grafik veya tablo varsa [ŞEKİL: ...] içinde ne gördüğünü yaz "
+    "(ölçüler, oklar, kütleler, eksen ve sayı değerleri, hangi noktalar).\n"
+    "- Kalemle çizilmiş daire, çarpı, çizik ve el yazısı işaretlerini YOK SAY.\n"
+    "- Sayfa kenarında kesik kalan soru veya şık varsa [kesik] diye belirt.\n"
+    "- Okunamayanı [okunamadı] diye belirt."
+)
+
+
+def resimden_metin(att):
+    url = f"data:{att['mime']};base64,{att['data']}"
+
+    for vm in VISION_MODELLER:
+        try:
+            r = groq_chat(
+                {
+                    "model": vm,
+                    "messages": [{
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": OCR_ISTEM},
+                            {"type": "image_url", "image_url": {"url": url}},
+                        ],
+                    }],
+                    "temperature": 0,
+                    "max_tokens": 6000,
+                },
+                timeout=120,
+            )
+        except requests.RequestException:
+            continue
+
+        if r.status_code == 200:
+            try:
+                t = r.json()["choices"][0]["message"].get("content") or ""
+            except Exception:
+                continue
+            t = re.sub(r"<think>.*?</think>", "", t, flags=re.S).strip()
+            if t:
+                return t
+            continue
+
+        if r.status_code == 429 or model_hatasi(r):
+            continue
+        break
+
+    return ""
+
+
 @app.route("/")
 def ana():
     isim = ""
@@ -958,10 +1001,7 @@ def ana():
     js_isim = json.dumps(isim).replace("<", "\\u003c")
     sayfa = HTML.replace("__ISIM__", js_isim)
 
-    return Response(
-        sayfa,
-        mimetype="text/html; charset=utf-8",
-    )
+    return Response(sayfa, mimetype="text/html; charset=utf-8")
 
 
 @app.route("/sohbet", methods=["POST"])
@@ -978,19 +1018,14 @@ def sohbet():
         uploaded = request.files.get("dosya")
 
         attachment = (
-            extract_file(uploaded)
-            if uploaded and uploaded.filename
-            else None
+            extract_file(uploaded) if uploaded and uploaded.filename else None
         )
 
         if attachment and attachment["type"] == "error":
             return jsonify(ok=False, cevap=attachment["text"]), 400
 
         if not mesaj and not attachment:
-            return jsonify(
-                ok=False,
-                cevap="Mesaj veya dosya gönder.",
-            ), 400
+            return jsonify(ok=False, cevap="Mesaj veya dosya gönder."), 400
 
         api_messages = [{"role": "system", "content": SISTEM}]
 
@@ -999,23 +1034,39 @@ def sohbet():
             content = item.get("content", "")
 
             if role in ("user", "assistant") and isinstance(content, str):
-                api_messages.append({
-                    "role": role,
-                    "content": content[:12000],
-                })
+                api_messages.append({"role": role, "content": content[:12000]})
 
         user_content = mesaj or "Eklediğim dosyayı incele ve yardımcı ol."
-        if "çevir" in user_content.lower() or "tercüme" in user_content.lower():
-            user_content += "\n\n(Metnin TAMAMINI eksiksiz çevir. Hiçbir paragrafı veya cümleyi atlama, yarıda bırakma.)"
-        model = MODEL
+        low = user_content.lower()
+        if "çevir" in low or "tercüme" in low:
+            user_content += (
+                "\n\n(Metnin TAMAMINI eksiksiz çevir. "
+                "Hiçbir paragrafı veya cümleyi atlama, yarıda bırakma.)"
+            )
 
-        if attachment:
-            if attachment["type"] == "image":
+        model = MODEL
+        adaylar = None
+        efor = "medium"
+
+        if attachment and attachment["type"] == "image":
+            efor = "high"
+            test_notu = (
+                "\n\n(Bu bir test sayfasıysa: her soruyu kendi numarasıyla, "
+                "adım adım çöz, sonucu şıklarla eşleştir. Sonda tablo değil, "
+                "düz 'Numara: Şık' listesi ver.)"
+            )
+            ocr_text = resimden_metin(attachment)
+
+            if ocr_text:
+                user_content += (
+                    test_notu
+                    + "\n\n--- FOTOĞRAFTAN OKUNAN METİN ---\n"
+                    + ocr_text
+                )
+            else:
+                # OCR olmadı: fotoğrafı doğrudan görsel modele ver
                 user_content = [
-                    {
-                        "type": "text",
-                        "text": (user_content or "Fotoğrafı incele.") + "\n\n(Bu bir test sayfasıysa: her soruyu numarasıyla, şıkları tek tek değerlendirerek adım adım çöz. Sonda 'Numara: Şık' formatında özet cevap listesi ver.)",
-                    },
+                    {"type": "text", "text": user_content + test_notu},
                     {
                         "type": "image_url",
                         "image_url": {
@@ -1026,53 +1077,15 @@ def sohbet():
                         },
                     },
                 ]
-                model = VISION_MODEL
-                try:
-                    ocr = requests.post(
-                        f"{API_URL}/chat/completions",
-                        headers={
-                            **groq_headers(),
-                            "Content-Type": "application/json",
-                        },
-                        json={
-                            "model": VISION_MODEL,
-                            "messages": [{
-                                "role": "user",
-                                "content": [
-                                    {"type": "text", "text": "Bu fotoğraftaki bütün yazıyı, soru numaralarını ve A-E şıklarını AYNEN, sırayla yaz. Çözme, yorum yapma. Şıklarda daire içine alınmış işaretleri yok say. Okunamayanı [okunamadı] diye belirt."},
-                                    {"type": "image_url", "image_url": {"url": f"data:{attachment['mime']};base64,{attachment['data']}"}},
-                                ],
-                            }],
-                            "temperature": 0,
-                            "max_tokens": 4000,
-                        },
-                        timeout=120,
-                    )
-                    ocr_text = ocr.json()["choices"][0]["message"]["content"].strip()
-                    if ocr.status_code == 200 and ocr_text:
-                        user_content = (
-                            user_content[0]["text"]
-                            + "\n\n--- FOTOĞRAFTAN OKUNAN METİN ---\n"
-                            + ocr_text
-                        )
-                        model = MODEL
-                except Exception:
-                    pass
+                adaylar = list(VISION_MODELLER)
 
-            else:
-                user_content += "\n\n" + attachment["text"]
+        elif attachment:
+            user_content += "\n\n" + attachment["text"]
 
-        api_messages.append({
-            "role": "user",
-            "content": user_content,
-        })
+        api_messages.append({"role": "user", "content": user_content})
 
-        adaylar = [model] + [
-            m for m in YEDEK_MODELLER if m != model
-        ]
-
-        if attachment and attachment["type"] == "image" and model == VISION_MODEL:
-            adaylar = [model]
+        if adaylar is None:
+            adaylar = [model] + [m for m in YEDEK_MODELLER if m != model]
 
         r = None
 
@@ -1080,36 +1093,22 @@ def sohbet():
             govde = {
                 "model": aday,
                 "messages": api_messages,
-                "temperature": 0.3,
+                "temperature": 0.2,
                 "max_tokens": 8000,
             }
 
             if aday.startswith("openai/gpt-oss"):
-                govde["reasoning_effort"] = "medium"
+                govde["reasoning_effort"] = efor
 
-            r = requests.post(
-                f"{API_URL}/chat/completions",
-                headers={
-                    **groq_headers(),
-                    "Content-Type": "application/json",
-                },
-                json=govde,
-                timeout=120,
-            )
+            r = groq_chat(govde, timeout=150)
 
-            if (
-                r.status_code in (400, 404)
-                and "model" in r.text.lower()
-            ):
+            if r.status_code == 429 or model_hatasi(r):
                 continue
 
             break
 
         if r is None:
-            return jsonify(
-                ok=False,
-                cevap="Kullanılabilir model bulunamadı.",
-            ), 502
+            return jsonify(ok=False, cevap="Kullanılabilir model bulunamadı."), 502
 
         if r.status_code != 200:
             try:
@@ -1119,37 +1118,28 @@ def sohbet():
 
             return jsonify(
                 ok=False,
-                cevap=(
-                    f"Groq API hatası ({r.status_code}): "
-                    f"{str(detail)[:500]}"
-                ),
+                cevap=f"Groq API hatası ({r.status_code}): {str(detail)[:500]}",
             ), 502
 
-        answer = r.json()["choices"][0]["message"]["content"]
+        answer = r.json()["choices"][0]["message"].get("content")
 
         if isinstance(answer, list):
             answer = "\n".join(
-                p.get("text", "")
-                for p in answer
-                if isinstance(p, dict)
+                p.get("text", "") for p in answer if isinstance(p, dict)
             )
 
         if not isinstance(answer, str):
             answer = str(answer or "Yanıt oluşturulamadı.")
 
-        return jsonify(ok=True, cevap=answer)
+        answer = re.sub(r"<think>.*?</think>", "", answer, flags=re.S).strip()
+
+        return jsonify(ok=True, cevap=answer or "Yanıt oluşturulamadı.")
 
     except requests.Timeout:
-        return jsonify(
-            ok=False,
-            cevap="İstek zaman aşımına uğradı. Tekrar dene.",
-        ), 504
+        return jsonify(ok=False, cevap="İstek zaman aşımına uğradı. Tekrar dene."), 504
 
     except Exception as e:
-        return jsonify(
-            ok=False,
-            cevap=f"Sunucu hatası: {str(e)[:300]}",
-        ), 500
+        return jsonify(ok=False, cevap=f"Sunucu hatası: {str(e)[:300]}"), 500
 
 
 @app.errorhandler(413)
@@ -1182,11 +1172,9 @@ if __name__ == "__main__":
         )
         raise SystemExit(1)
 
-    print("\nBu telefon: http://127.0.0.1:5000")
+    print(f"\nBu telefon: http://127.0.0.1:{PORT}")
 
     if HOST != "127.0.0.1":
-        print(
-            f"Arkadaşın: http://{yerel_ip()}:5000 (aynı Wi-Fi)\n"
-        )
+        print(f"Arkadaşın: http://{yerel_ip()}:{PORT} (aynı Wi-Fi)\n")
 
-    app.run(host=HOST, port=5000, debug=False)
+    app.run(host=HOST, port=PORT, debug=False)
