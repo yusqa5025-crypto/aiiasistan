@@ -895,23 +895,26 @@ async function startVoiceRecording() {
       const rms = Math.sqrt(sum / samples.length);
       const now = performance.now();
 
-      if (rms > 0.018) {
+      if (rms > 0.012) {
         speechDetected = true;
         lastLoudAt = now;
       }
 
-      if (speechDetected && now - lastLoudAt > 1300) {
+      // Konuşma bittikten sonra 2,2 saniye bekle.
+      if (speechDetected && now - lastLoudAt > 2200) {
         voiceStatus("Konuşman alındı, yanıt hazırlanıyor…");
         recorder.stop();
         return;
       }
 
-      if (now - startedAt > 15000) {
+      // Tek seferlik kayıt süresini 30 saniyeye çıkar.
+      if (now - startedAt > 30000) {
         recorder.stop();
         return;
       }
 
-      if (!speechDetected && now - startedAt > 8000) {
+      // Konuşma başlamazsa mikrofonu 10 saniye sonra yeniden dene.
+      if (!speechDetected && now - startedAt > 10000) {
         recorder.stop();
         return;
       }
