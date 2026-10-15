@@ -1293,13 +1293,16 @@ document.addEventListener("click",e=>{if(!menu.contains(e.target))menu.style.dis
    }
   }, 450);
  }
- function kapat(){
+function kapat(){
   clearTimeout(t);
   document.documentElement.style.setProperty("--kb", "0px");
- }
- e.addEventListener("focus", ac);
- e.addEventListener("blur", kapat);
-})();
+  setTimeout(function(){
+    window.dispatchEvent(new Event("resize"));
+    const m = document.getElementById("messages");
+    if(m) m.scrollTop = m.scrollHeight;
+  }, 300);
+}
+
 </script>
 </body>
 </html>'''
