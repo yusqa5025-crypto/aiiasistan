@@ -69,7 +69,7 @@ Numara: Şık
 
 
 def groq_headers():
-    key = request.headers.get("X-Groq-Key", "").strip() or API_KEY
+    key = API_KEY
     return {"Authorization": f"Bearer {key}"}
 
 
@@ -276,7 +276,7 @@ button{cursor:pointer}
   <button class="iconbtn" id="menuBtn" aria-label="Menü">☰</button>
   <div class="brand">AI Asistan<small>Metin · Fotoğraf · Ses · Dosya</small></div>
  </div>
- <div class="topgroup"><button class="iconbtn" id="keyBtn" aria-label="API anahtarı" title="API anahtarı">⚿</button><button id="newBtn">＋ Yeni sohbet</button></div>
+ <div class="topgroup"><button id="newBtn">＋ Yeni sohbet</button></div>
 </header>
 
 <div id="layout">
@@ -708,7 +708,7 @@ async function sendMessage() {
 
   const response = await fetch("/sohbet", {
    method: "POST",
-   headers: {"X-Groq-Key": localStorage.getItem("groq_key") || ""},
+
    body: form
   });
 
@@ -1061,16 +1061,7 @@ $("mic").onclick = async () => {
  }
 };
 
-function askKey() {
- const k = prompt("Groq API anahtarını yapıştır (console.groq.com adresinden ücretsiz):",
-  localStorage.getItem("groq_key") || "");
- if (k !== null) {
-  localStorage.setItem("groq_key", k.trim());
-  toast("Anahtar kaydedildi");
- }
-}
-$("keyBtn").onclick = askKey;
-if (!localStorage.getItem("groq_key")) setTimeout(askKey, 600);
+
 
 messagesEl.appendChild(welcomeEl());
 renderHistory();
@@ -1334,10 +1325,10 @@ def ana():
 
 @app.route("/sohbet", methods=["POST"])
 def sohbet():
-    if not (request.headers.get("X-Groq-Key", "").strip() or API_KEY):
+    if not API_KEY:
         return jsonify(
             ok=False,
-            cevap="Önce sağ üstteki 🔑 düğmesinden Groq API anahtarını gir.",
+            cevap="Sunucuda GROQ_API_KEY ayarlanmamış.",
         ), 500
 
     try:
