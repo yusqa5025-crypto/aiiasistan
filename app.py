@@ -196,31 +196,29 @@ button{cursor:pointer}
 .assistant .bubble pre{overflow:auto}
 .assistant .bubble p{margin:8px 0}
 
-
 .message-actions{
  display:flex;align-items:center;flex-wrap:wrap;gap:5px;
  margin-top:10px;padding-top:4px;position:relative
 }
-.message-actions{
- display:flex;align-items:center;gap:4px;flex-wrap:wrap;
- margin-top:10px;padding-top:4px;position:relative
-}
 .msg-action{
  display:inline-flex;align-items:center;justify-content:center;
- min-width:32px;height:32px;padding:0 8px;border:0;
- border-radius:9px;background:transparent;color:var(--muted);
- font-size:15px;font-weight:400;cursor:pointer;
- transition:background .18s ease,color .18s ease,transform .18s ease;
- -webkit-tap-highlight-color:transparent
+ width:32px;height:32px;padding:0;border:0;border-radius:8px;
+ background:transparent;color:var(--muted);cursor:pointer;
+ -webkit-tap-highlight-color:transparent;
+ transition:background .18s ease,transform .18s ease
 }
-.msg-action:active{transform:scale(.94)}
 .msg-action:hover{background:var(--hover)}
+.msg-action:active{transform:scale(.94)}
 .msg-action.flash{animation:actionFlash 1.5s ease-out}
 .msg-action.active{background:var(--hover);color:var(--text)}
 @keyframes actionFlash{
  0%{background:rgba(150,150,150,.28)}
  100%{background:transparent}
 }
+
+
+
+
 .msg-more-menu{
  position:absolute;right:0;bottom:38px;z-index:30;
  min-width:175px;padding:5px;gap:2px;flex-direction:column;
@@ -775,60 +773,66 @@ function addSpeechButton(bubble, text) {
  const actions = document.createElement("div");
  actions.className = "message-actions";
 
- function makeButton(label, title, callback) {
+ const icons = {
+  copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/>',
+  like: '<path d="M7 10v11H3V10h4Zm0 0 5-7c2 0 3 2 2 4l-1 3h6a2 2 0 0 1 2 2l-2 7a2 2 0 0 1-2 2H7"/>',
+  dislike: '<path d="M7 14V3H3v11h4Zm0 0 5 7c2 0 3-2 2-4l-1-3h6a2 2 0 0 0 2-2l-2-7a2 2 0 0 0-2-2H7"/>',
+  sound: '<path d="M11 5 6 9H3v6h3l5 4V5Z"/><path d="M15 9a5 5 0 0 1 0 6M18 6a9 9 0 0 1 0 12"/>',
+  share: '<path d="M12 16V3m-5 5 5-5 5 5"/><path d="M5 12v8h14v-8"/>',
+  more: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>'
+ };
+
+ function makeButton(icon, title, callback) {
   const b = document.createElement("button");
   b.type = "button";
   b.className = "msg-action";
-  b.textContent = label;
   b.title = title;
   b.setAttribute("aria-label", title);
+  b.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + icons[icon] + '</svg>';
   b.onclick = () => {
    b.classList.remove("flash");
    void b.offsetWidth;
    b.classList.add("flash");
    setTimeout(() => b.classList.remove("flash"), 1500);
-   callback();
+   callback(b);
   };
   return b;
  }
 
- const copyBtn = makeButton("▢", "Yanıtı kopyala", async () => {
+ const copyBtn = makeButton("copy", "Kopyala", async () => {
   try {
    await copyMessageText(text);
    toast("Yanıt kopyalandı.");
-  } catch (e) {
-   toast("Kopyalanamadı.");
-  }
+  } catch(e) { toast("Kopyalanamadı."); }
  });
 
- const likeBtn = makeButton("♧", "Yanıtı beğen", () => {
-  const active = likeBtn.classList.contains("active");
-  likeBtn.classList.toggle("active", !active);
+ const likeBtn = makeButton("like", "Beğen", b => {
+  const active = b.classList.contains("active");
+  b.classList.toggle("active", !active);
   dislikeBtn.classList.remove("active");
   toast(active ? "Beğeni kaldırıldı." : "Geri bildirimin alındı.");
  });
 
- const dislikeBtn = makeButton("♧", "Yanıtı beğenme", () => {
-  const active = dislikeBtn.classList.contains("active");
-  dislikeBtn.classList.toggle("active", !active);
+ const dislikeBtn = makeButton("dislike", "Beğenme", b => {
+  const active = b.classList.contains("active");
+  b.classList.toggle("active", !active);
   likeBtn.classList.remove("active");
   toast(active ? "Geri bildirim kaldırıldı." : "Geri bildirimin alındı.");
  });
 
- const speakBtn = makeButton("◖))", "Yanıtı sesli dinle", () => {
+ const speakBtn = makeButton("sound", "Sesli dinle", () => {
   speakMessageText(text, speakBtn);
  });
 
- const shareBtn = makeButton("↗", "Yanıtı paylaş", () => {
+ const shareBtn = makeButton("share", "Paylaş", () => {
   shareMessageText(text);
  });
 
  const moreWrap = document.createElement("div");
  moreWrap.className = "msg-more-wrap";
 
- const moreBtn = makeButton("⋯", "Diğer işlemler", () => {
-  const open = menu.style.display !== "none";
-  menu.style.display = open ? "none" : "flex";
+ const moreBtn = makeButton("more", "Daha fazla", () => {
+  menu.style.display = menu.style.display === "none" ? "flex" : "none";
  });
 
  const menu = document.createElement("div");
@@ -850,17 +854,12 @@ function addSpeechButton(bubble, text) {
   try {
    await copyMessageText(text);
    toast("Yanıt kopyalandı.");
-  } catch (e) {
-   toast("Kopyalanamadı.");
-  }
+  } catch(e) { toast("Kopyalanamadı."); }
  });
-
  menuItem("Yanıtı paylaş", () => shareMessageText(text));
-
  menuItem("Seslendirmeyi durdur", () => {
   if (window.speechSynthesis) window.speechSynthesis.cancel();
-  speakBtn.dataset.playing = "";
-  speakBtn.textContent = "◖))";
+  speakBtn.classList.remove("active");
   toast("Seslendirme durduruldu.");
  });
 
@@ -868,6 +867,7 @@ function addSpeechButton(bubble, text) {
  actions.append(copyBtn, likeBtn, dislikeBtn, speakBtn, shareBtn, moreWrap);
  bubble.appendChild(actions);
 }
+
 function bindCopy(bubble) {
  bubble.querySelectorAll(".copy").forEach(btn => {
   btn.onclick = async () => {
