@@ -1072,7 +1072,7 @@ def sohbet():
             }
 
             if aday.startswith("openai/gpt-oss"):
-                govde["reasoning_effort"] = "high"
+                govde["reasoning_effort"] = "medium"
 
             r = requests.post(
                 f"{API_URL}/chat/completions",
