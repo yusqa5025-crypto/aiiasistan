@@ -2,6 +2,16 @@
   "appId": "com.yusif.aiasistan",
   "appName": "Asistan",
   "webDir": "www",
-  "server": { "url": "https://aiiasistan.onrender.com" },
-  "android": { "adjustMarginsForEdgeToEdge": "force" }
+  "server": {
+    "url": "https://aiiasistan.onrender.com"
+  },
+  "android": {
+    "adjustMarginsForEdgeToEdge": "disabled"
+  },
+  "plugins": {
+    "Keyboard": {
+      "resize": "native",
+      "resizeOnFullScreen": true
+    }
+  }
 }
