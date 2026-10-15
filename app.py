@@ -196,10 +196,32 @@ button{cursor:pointer}
 .assistant .bubble pre{overflow:auto}
 .assistant .bubble p{margin:8px 0}
 
+
 .message-actions{
- display:flex;align-items:center;flex-wrap:wrap;gap:3px;
- margin-top:12px;padding-top:5px;position:relative
+ display:flex;align-items:center;flex-wrap:wrap;gap:5px;
+ margin-top:10px;padding-top:4px;position:relative
 }
+.msg-action{
+ min-width:32px;height:32px;padding:0 9px;border:0;
+ border-radius:8px;background:transparent;color:var(--muted);
+ font-size:13px;font-weight:400;cursor:pointer;
+ transition:background .15s ease
+}
+.msg-action:hover,.msg-action.active{
+ background:var(--hover);color:var(--muted)
+}
+.msg-more-menu{
+ position:absolute;right:0;bottom:38px;z-index:30;
+ min-width:175px;padding:5px;gap:2px;flex-direction:column;
+ background:var(--panel);border:1px solid var(--line);
+ border-radius:10px;box-shadow:0 5px 20px #0002
+}
+.msg-more-menu button{
+ border:0;border-radius:7px;background:transparent;color:inherit;
+ text-align:left;padding:10px 12px;white-space:nowrap;
+ font-size:13px;cursor:pointer
+}
+.msg-more-menu button:hover{background:var(--hover)}
 .msg-action{
  min-width:34px;height:32px;padding:0 9px;border:0;
  border-radius:9px;background:transparent;color:var(--muted);
@@ -753,7 +775,7 @@ function addSpeechButton(bubble, text) {
   return b;
  }
 
- const copyBtn = makeButton("▢", "Yanıtı kopyala", async () => {
+ const copyBtn = makeButton("Kopyala", "Yanıtı kopyala", async () => {
   try {
    await copyMessageText(text);
    toast("Yanıt kopyalandı.");
@@ -762,32 +784,32 @@ function addSpeechButton(bubble, text) {
   }
  });
 
- const likeBtn = makeButton("👍", "Yanıtı beğen", () => {
+ const likeBtn = makeButton("Beğen", "Yanıtı beğen", () => {
   const active = likeBtn.classList.contains("active");
   likeBtn.classList.toggle("active", !active);
   dislikeBtn.classList.remove("active");
   toast(active ? "Beğeni kaldırıldı." : "Geri bildirimin alındı.");
  });
 
- const dislikeBtn = makeButton("👎", "Yanıtı beğenme", () => {
+ const dislikeBtn = makeButton("Beğenme", "Yanıtı beğenme", () => {
   const active = dislikeBtn.classList.contains("active");
   dislikeBtn.classList.toggle("active", !active);
   likeBtn.classList.remove("active");
   toast(active ? "Geri bildirim kaldırıldı." : "Geri bildirimin alındı.");
  });
 
- const speakBtn = makeButton("🔊", "Yanıtı sesli dinle", () => {
+ const speakBtn = makeButton("Sesli dinle", "Yanıtı sesli dinle", () => {
   speakMessageText(text, speakBtn);
  });
 
- const shareBtn = makeButton("↗", "Yanıtı paylaş", () => {
+ const shareBtn = makeButton("Paylaş", "Yanıtı paylaş", () => {
   shareMessageText(text);
  });
 
  const moreWrap = document.createElement("div");
  moreWrap.className = "msg-more-wrap";
 
- const moreBtn = makeButton("⋯", "Diğer işlemler", () => {
+ const moreBtn = makeButton("Daha fazla", "Diğer işlemler", () => {
   const open = menu.style.display !== "none";
   menu.style.display = open ? "none" : "flex";
  });
@@ -821,7 +843,7 @@ function addSpeechButton(bubble, text) {
  menuItem("Seslendirmeyi durdur", () => {
   if (window.speechSynthesis) window.speechSynthesis.cancel();
   speakBtn.dataset.playing = "";
-  speakBtn.textContent = "🔊";
+  speakBtn.textContent = "Sesli dinle";
   toast("Seslendirme durduruldu.");
  });
 
