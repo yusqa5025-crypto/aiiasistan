@@ -1198,9 +1198,13 @@ def extract_file(file):
             if r.status_code != 200:
                 raise RuntimeError(r.text[:300])
 
+            transcript = (r.json().get("text") or "").strip()
+            if not transcript:
+                return {"type": "error", "text": "Ses anlaşılmadı. Lütfen tekrar konuş."}
             return {
-                "type": "text",
-                "text": "Ses kaydının metni:\n" + r.json().get("text", ""),
+                "type": "audio",
+                "text": transcript,
+                "name": name,
             }
 
         except Exception as e:
@@ -1368,7 +1372,20 @@ def sohbet():
             if role in ("user", "assistant") and isinstance(content, str):
                 api_messages.append({"role": role, "content": content[:12000]})
 
-        user_content = mesaj or "Eklediğim dosyaları incele ve yardımcı ol."
+        ses_metinleri = [
+            (a.get("text") or "").strip()
+            for a in attachments
+            if a.get("type") == "audio" and (a.get("text") or "").strip()
+        ]
+        if ses_metinleri:
+            user_content = (
+                "Kullanıcının sesli mesajında söylediği sözler: "
+                + " ".join(ses_metinleri)
+                + "\nBuna doğrudan ve doğal bir sohbet yanıtı ver. "
+                + "Dosyadan bahsetme ve kullanıcının dilinde cevap ver."
+            )
+        else:
+            user_content = mesaj or "Eklediğim dosyaları incele ve yardımcı ol."
         low = user_content.lower()
         if "çevir" in low or "tercüme" in low:
             user_content += (
@@ -1401,6 +1418,8 @@ def sohbet():
                     )
                 else:
                     okunamayan_resimler.append(attachment)
+            elif attachment["type"] == "audio":
+                continue
             else:
                 metin_parcalari.append(
                     "\n\n" + attachment.get("text", "")
