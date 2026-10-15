@@ -1,0 +1,8 @@
+{
+  "appId": "com.yusif.aiasistan",
+  "appName": "AI Asistan",
+  "webDir": "www",
+  "server": {
+    "url": "https://BURAYA-RENDER-ADRESI.onrender.com"
+  }
+}

@@ -1,0 +1,8 @@
+.env
+*.bak
+__pycache__/
+node_modules/
+android/
+app.py.*
+setup.sh
+{

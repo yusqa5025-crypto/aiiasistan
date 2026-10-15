@@ -1,0 +1,1144 @@
+import os
+import io
+import json
+import base64
+import mimetypes
+import socket
+import subprocess
+import requests
+
+from flask import Flask, request, jsonify, Response
+from werkzeug.utils import secure_filename
+
+app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024
+
+
+def _env_yukle():
+    yol = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    if os.path.exists(yol):
+        with open(yol, encoding="utf-8") as dosya:
+            for satir in dosya:
+                satir = satir.strip()
+                if satir and not satir.startswith("#") and "=" in satir:
+                    k, v = satir.split("=", 1)
+                    os.environ[k.strip()] = v.strip().strip("\"'")
+
+
+_env_yukle()
+
+API_KEY = os.environ.get("GROQ_API_KEY", "").strip().strip("\"'")
+API_URL = "https://api.groq.com/openai/v1"
+SIFRE = os.environ.get("APP_SIFRE", "")
+HOST = os.environ.get("HOST", "0.0.0.0")
+
+MODEL = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
+VISION_MODEL = os.environ.get(
+    "GROQ_VISION_MODEL",
+    "qwen/qwen3.8-27b",
+)
+YEDEK_MODELLER = [
+    "llama-3.3-70b-versatile",
+    "llama-3.1-8b-instant",
+]
+
+SISTEM = """Her zaman kullanıcının istediği dilde cevap ver.
+Kullanıcı bir metnin tamamını çevirmemi istiyorsa ilk cümleden son cümleye kadar tamamını çevir.
+Yalnızca ilk paragrafı veya ilk cümleyi çevirip durma.
+Fotoğraftaki bütün sayfaları, paragrafları, başlıkları ve soruları sırayla işle.
+Metni özetleme, kısaltma veya cümle atlama.
+Çeviri tamamlanmadan cevabı bitirme.
+Metin uzunsa mümkün olduğunca tamamını tek cevapta ver.
+Sorular da isteniyorsa önce tam çeviriyi, ardından bütün soruların numaralı cevaplarını ver.
+Kullanıcının istediği dile sadık kal.
+Okunamayan bölümleri açıkça belirt ve okunabilen bölümleri çevirmeye devam et.
+Görselde olmayan bilgileri uydurma.
+"""
+def groq_headers():
+    key = request.headers.get("X-Groq-Key", "").strip() or API_KEY
+    return {"Authorization": f"Bearer {key}"}
+
+
+@app.before_request
+def kilit():
+    if not SIFRE:
+        return None
+
+    a = request.authorization
+    if not a or a.password != SIFRE:
+        return Response(
+            "Şifre gerekli",
+            401,
+            {"WWW-Authenticate": 'Basic realm="Asistan"'},
+        )
+    return None
+
+
+HTML = r'''<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#212121">
+<title>AI Asistan</title>
+
+<script>
+window.MathJax = {
+  tex: {
+    inlineMath: [['\\(', '\\)']],
+    displayMath: [['\\[', '\\]'], ['$$', '$$']]
+  },
+  options: {
+    skipHtmlTags: ['script','noscript','style','textarea','pre','code']
+  },
+  startup: {
+    typeset: false
+  }
+};
+</script>
+<script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
+
+<style>
+:root{
+ --bg:#212121;
+ --panel:#171717;
+ --hover:#303030;
+ --text:#f4f4f4;
+ --muted:#aaa;
+ --line:#414141;
+ --blue:#7da4ff;
+ --user:#303030;
+}
+*{box-sizing:border-box}
+body{
+ margin:0;background:var(--bg);color:var(--text);
+ font-family:system-ui,-apple-system,sans-serif;
+ height:100dvh;overflow:hidden
+}
+button,textarea{font:inherit;color:inherit}
+button{cursor:pointer}
+#app{height:100dvh;display:flex;flex-direction:column}
+#top{
+ height:64px;flex-shrink:0;display:flex;align-items:center;
+ justify-content:space-between;padding:0 12px;
+ border-bottom:1px solid #333
+}
+.topgroup{display:flex;align-items:center;gap:8px}
+.iconbtn{
+ width:42px;height:42px;border:0;border-radius:50%;
+ background:transparent;font-size:22px
+}
+.iconbtn:hover,.tool:hover{background:var(--hover)}
+.brand{font-weight:650;font-size:17px}
+.brand small{
+ display:block;font-weight:400;color:var(--muted);font-size:12px
+}
+#newBtn{
+ background:transparent;border:1px solid var(--line);
+ border-radius:24px;padding:10px 12px;font-size:13px
+}
+#layout{display:flex;flex:1;min-height:0;position:relative}
+#sidebar{
+ width:275px;flex-shrink:0;background:var(--panel);
+ padding:12px;display:flex;flex-direction:column;gap:8px;z-index:5
+}
+.sidebtn,.chatitem{
+ border:0;background:transparent;text-align:left;
+ padding:12px;border-radius:12px
+}
+.sidebtn:hover,.chatitem:hover{background:var(--hover)}
+#historyTitle{color:var(--muted);font-size:12px;padding:12px 8px 4px}
+#history{display:flex;flex-direction:column;gap:4px;overflow-y:auto}
+.chatitem{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#shade{display:none}
+#main{
+ flex:1;min-width:0;display:flex;flex-direction:column;position:relative
+}
+#messages{flex:1;min-height:0;overflow-y:auto;padding:20px 16px}
+#welcome{
+ max-width:580px;margin:24vh auto 0;text-align:center;padding:12px
+}
+#welcome h1{font-size:27px;font-weight:600;line-height:1.35}
+#welcome p{color:var(--muted);line-height:1.7}
+.msgrow{display:flex;gap:10px;max-width:800px;margin:0 auto 22px}
+.msgrow.user{justify-content:flex-end}
+.bubble{min-width:0;max-width:100%;overflow-wrap:anywhere;line-height:1.75}
+.user .bubble{
+ background:var(--user);padding:11px 16px;border-radius:22px;
+ max-width:88%;white-space:pre-wrap
+}
+.assistant .bubble{flex:1;padding:2px 0}
+.avatar{
+ width:30px;height:30px;flex-shrink:0;border-radius:50%;
+ display:grid;place-items:center;background:#303030;
+ color:#c6d8ff;font-size:12px;font-weight:700
+}
+.assistant .bubble h1,
+.assistant .bubble h2,
+.assistant .bubble h3{color:var(--blue)}
+.assistant .bubble strong{color:#a9c2ff}
+.assistant .bubble a{color:#9bbaff}
+.assistant .bubble pre{overflow:auto}
+.assistant .bubble p{margin:8px 0}
+.assistant .bubble mjx-container{max-width:100%;overflow-x:auto;overflow-y:hidden}
+.codebox{
+ margin:12px 0;border:1px solid #444;border-radius:12px;
+ overflow:hidden;background:#101010
+}
+.codehead{
+ display:flex;align-items:center;justify-content:space-between;
+ padding:8px 12px;background:#292929;font-size:12px;color:#ccc
+}
+.copy,.speak{
+ background:#393939;border:0;border-radius:8px;
+ padding:6px 10px;font-size:12px;margin:3px
+}
+.codebox pre{margin:0;padding:14px;overflow-x:auto;font-size:13px}
+.codebox code{font-family:ui-monospace,monospace}
+#composerWrap{
+ width:100%;max-width:850px;margin:0 auto;
+ padding:8px 12px max(12px,env(safe-area-inset-bottom))
+}
+#preview{
+ display:none;border:1px solid var(--line);padding:9px 12px;
+ border-radius:12px;margin-bottom:8px;font-size:13px
+}
+#removeFile{float:right;background:none;border:0;font-size:20px}
+#composer{
+ border:1px solid #454545;border-radius:27px;
+ background:#303030;padding:8px 9px
+}
+#entry{
+ display:block;width:100%;min-height:36px;max-height:150px;
+ resize:none;outline:none;border:0;background:transparent;color:white;
+ padding:8px;font-size:16px;line-height:1.5
+}
+#entry::placeholder{color:#aaa}
+#tools{display:flex;align-items:center;gap:8px}
+#tools .sp{flex:1}
+.tool{
+ width:42px;height:42px;border:0;border-radius:50%;
+ display:grid;place-items:center;background:transparent;
+ font-size:24px;flex-shrink:0
+}
+#mic{background:#3d3d3d;color:#f4f4f4}
+#mic:hover{background:#4a4a4a}
+#mic.recording{background:#d33;color:white}
+#send{background:#f4f4f4;color:#222}
+#send:hover{background:#ddd}
+#send:disabled{opacity:.5}
+#fileInput,#cameraInput,#photoInput,#audioInput,#micInput{display:none}
+#hint{text-align:center;font-size:11px;color:#888;padding-top:8px}
+#attachMenu{
+ display:none;position:absolute;bottom:108px;left:14px;
+ background:#303030;border:1px solid #454545;border-radius:18px;
+ padding:8px;width:225px;z-index:8;box-shadow:0 8px 30px #0008
+}
+.menuitem{
+ display:flex;align-items:center;gap:14px;
+ padding:13px 14px;border-radius:12px;cursor:pointer;font-size:16px
+}
+.menuitem svg{flex-shrink:0;width:22px;height:22px;color:#cfcfcf}
+.menuitem span{flex:1}
+.menuitem:hover{background:#444}
+#toast{
+ display:none;position:fixed;bottom:100px;left:50%;
+ transform:translateX(-50%);background:#444;color:white;
+ padding:10px 16px;border-radius:20px;z-index:20;font-size:13px;
+ max-width:90%;text-align:center
+}
+@media(max-width:650px){
+ #sidebar{
+  position:absolute;inset:0 auto 0 0;width:min(82vw,300px);
+  transform:translateX(-105%);transition:transform .2s
+ }
+ #sidebar.open{transform:translateX(0);box-shadow:12px 0 40px #0008}
+ #shade.show{
+  display:block;position:absolute;inset:0;background:#0008;z-index:4
+ }
+ #messages{padding:18px 14px}
+ #welcome{margin-top:20vh}
+ #welcome h1{font-size:24px}
+ #newBtn{font-size:12px;padding:9px}
+}
+</style>
+</head>
+
+<body>
+<div id="app">
+<header id="top">
+ <div class="topgroup">
+  <button class="iconbtn" id="menuBtn" aria-label="Menü">☰</button>
+  <div class="brand">AI Asistan<small>Metin · Fotoğraf · Ses · Dosya</small></div>
+ </div>
+ <div class="topgroup"><button class="iconbtn" id="keyBtn" aria-label="API anahtarı">🔑</button><button id="newBtn">＋ Yeni sohbet</button></div>
+</header>
+
+<div id="layout">
+ <aside id="sidebar">
+  <button class="sidebtn" id="sideNew">＋　Yeni sohbet</button>
+  <div id="historyTitle">Sohbet geçmişi</div>
+  <div id="history"></div>
+ </aside>
+ <div id="shade"></div>
+
+ <main id="main">
+  <section id="messages"></section>
+
+  <div id="attachMenu">
+   <div class="menuitem" data-action="camera">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l2-3h6l2 3h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13" r="3.5"/></svg>
+    <span>Kamera</span>
+   </div>
+   <div class="menuitem" data-action="photos">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="1.8"/><path d="M21 16l-5-5-8 9"/></svg>
+    <span>Fotoğraflar</span>
+   </div>
+   <div class="menuitem" data-action="files">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11l-8.5 8.5a5 5 0 0 1-7-7L14 4a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4L15 7"/></svg>
+    <span>Dosyalar</span>
+   </div>
+   <div class="menuitem" data-action="audio">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+    <span>Ses dosyası</span>
+   </div>
+  </div>
+
+  <div id="composerWrap">
+   <div id="preview"><span id="filename"></span><button id="removeFile">×</button></div>
+   <div id="composer">
+    <textarea id="entry" rows="1" placeholder="Herhangi bir şey sor"></textarea>
+    <div id="tools">
+     <button class="tool" id="plus" aria-label="Dosya ekle">＋</button>
+     <span class="sp"></span>
+     <button class="tool" id="mic" aria-label="Ses kaydet">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+     </button>
+     <button class="tool" id="send" aria-label="Gönder">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+     </button>
+    </div>
+   </div>
+   <div id="hint">AI Asistan hata yapabilir. Önemli bilgileri kontrol et.</div>
+   <input id="fileInput" type="file" accept="image/*,audio/*,.pdf,.txt,.md,.csv,.json,.py,.js,.html,.css,.xml,.log,.docx">
+   <input id="cameraInput" type="file" accept="image/*" capture="environment">
+   <input id="photoInput" type="file" accept="image/*">
+   <input id="audioInput" type="file" accept="audio/*">
+   <input id="micInput" type="file" accept="audio/*" capture>
+  </div>
+ </main>
+</div>
+<div id="toast"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const KULLANICI = __ISIM__;
+const HISTKEY = "ai_history_list" + (KULLANICI ? "_" + KULLANICI.toLowerCase() : "");
+
+const MIC_SVG = '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>';
+const STOP_SVG = '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';
+
+const messagesEl = $("messages");
+const entry = $("entry");
+
+let conversation = [];
+let historyList = [];
+
+try {
+ historyList = JSON.parse(localStorage.getItem(HISTKEY) || "[]");
+ if (!Array.isArray(historyList)) historyList = [];
+} catch(e) {
+ historyList = [];
+}
+
+let activeId = null;
+let selectedFile = null;
+let recorder = null;
+let audioChunks = [];
+
+function toast(t) {
+ $("toast").textContent = t;
+ $("toast").style.display = "block";
+ setTimeout(() => $("toast").style.display = "none", 2500);
+}
+
+function scrollBottom() {
+ messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+function closeMenus() {
+ $("sidebar").classList.remove("open");
+ $("shade").classList.remove("show");
+ $("attachMenu").style.display = "none";
+}
+
+function welcomeEl() {
+ const w = document.createElement("div");
+ w.id = "welcome";
+
+ const h = document.createElement("h1");
+ h.textContent = KULLANICI
+  ? KULLANICI + ", sana nasıl yardımcı olabilirim?"
+  : "Sana nasıl yardımcı olabilirim?";
+
+ const p = document.createElement("p");
+ p.textContent = "Soru sor, fotoğraf gönder, ses kaydet veya dosya yükle.";
+
+ w.append(h, p);
+ return w;
+}
+
+function newChat() {
+ activeId = null;
+ conversation = [];
+ selectedFile = null;
+ $("preview").style.display = "none";
+ messagesEl.replaceChildren(welcomeEl());
+ closeMenus();
+}
+
+function saveHistory() {
+ if (!activeId) activeId = String(Date.now());
+
+ let item = historyList.find(x => x.id === activeId);
+
+ if (!item) {
+  item = {
+   id: activeId,
+   title: conversation.find(x => x.role === "user")?.content?.slice(0, 38) || "Yeni sohbet",
+   messages: []
+  };
+  historyList.unshift(item);
+ }
+
+ item.messages = conversation;
+
+ try {
+  localStorage.setItem(HISTKEY, JSON.stringify(historyList));
+ } catch(e) {
+  toast("Sohbet geçmişi kaydedilemedi.");
+ }
+
+ renderHistory();
+}
+
+function renderHistory() {
+ $("history").replaceChildren();
+
+ historyList.forEach(item => {
+  const b = document.createElement("button");
+  b.className = "chatitem";
+  b.textContent = "▢　" + item.title;
+
+  b.onclick = () => {
+   activeId = item.id;
+   conversation = JSON.parse(JSON.stringify(item.messages || []));
+   messagesEl.replaceChildren();
+
+   conversation.forEach(m => renderMessage(m.role, m.content, false));
+
+   closeMenus();
+   scrollBottom();
+  };
+
+  $("history").appendChild(b);
+ });
+}
+
+$("menuBtn").onclick = () => {
+ if (innerWidth <= 650) {
+  $("sidebar").classList.toggle("open");
+  $("shade").classList.toggle("show");
+ } else {
+  $("sidebar").classList.toggle("open");
+ }
+};
+
+$("shade").onclick = closeMenus;
+$("newBtn").onclick = newChat;
+$("sideNew").onclick = newChat;
+
+$("plus").onclick = () => {
+ const m = $("attachMenu");
+ m.style.display = m.style.display === "block" ? "none" : "block";
+};
+
+$("attachMenu").onclick = e => {
+ const action = e.target.closest(".menuitem")?.dataset.action;
+ if (!action) return;
+
+ $("attachMenu").style.display = "none";
+
+ if (action === "camera") $("cameraInput").click();
+ if (action === "photos") $("photoInput").click();
+ if (action === "files") $("fileInput").click();
+ if (action === "audio") $("audioInput").click();
+};
+
+["fileInput", "cameraInput", "photoInput", "audioInput", "micInput"].forEach(id => {
+ $(id).onchange = () => {
+  const f = $(id).files[0];
+
+  if (f) {
+   selectedFile = f;
+   $("filename").textContent = (id === "micInput" ? "🎙 " : "📎 ") + f.name;
+   $("preview").style.display = "block";
+
+   if (id === "micInput") toast("Ses hazır. Göndermek için oka bas.");
+  }
+
+  $(id).value = "";
+ };
+});
+
+$("removeFile").onclick = () => {
+ selectedFile = null;
+ $("preview").style.display = "none";
+};
+
+entry.addEventListener("input", () => {
+ entry.style.height = "auto";
+ entry.style.height = Math.min(entry.scrollHeight, 150) + "px";
+});
+
+entry.addEventListener("keydown", e => {
+ if (e.key === "Enter" && !e.shiftKey) {
+  e.preventDefault();
+  sendMessage();
+ }
+});
+
+$("send").onclick = sendMessage;
+
+function escapeHtml(s) {
+ return String(s).replace(/[&<>"]/g, c => ({
+  "&": "&amp;",
+  "<": "&lt;",
+  ">": "&gt;",
+  '"': "&quot;"
+ }[c]));
+}
+
+function renderMarkdown(text) {
+ text = String(text)
+  .replace(/\\?&(?:amp;)?#91;/g, "\\[")
+  .replace(/\\?&(?:amp;)?#93;/g, "\\]")
+  .replace(/\\([.,:;!?])/g, "$1");
+
+ const blocks = [];
+
+ let s = text.replace(/```([\w+-]*)\n?([\s\S]*?)```/g, (all, lang, code) => {
+  blocks.push({lang, code});
+  return "\u0000CODE" + (blocks.length - 1) + "\u0000";
+ });
+
+ s = escapeHtml(s);
+
+ s = s.replace(/`([^`\n]+)`/g, "<code>$1</code>");
+ s = s.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+ s = s.replace(/\*(.+?)\*/g, "<em>$1</em>");
+ s = s.replace(/^### (.+)$/gm, "<h3>$1</h3>");
+ s = s.replace(/^## (.+)$/gm, "<h2>$1</h2>");
+ s = s.replace(/^# (.+)$/gm, "<h1>$1</h1>");
+ s = s.replace(/^\s*[-*] (.+)$/gm, "<li>$1</li>");
+ s = s.replace(/(?:<li>.*?<\/li>\n?)+/gs, x => "<ul>" + x + "</ul>");
+
+ s = s.split(/\n{2,}/).map(p => {
+  p = p.trim();
+  if (!p) return "";
+  if (/^<(h\d|ul|ol|div|pre)/i.test(p)) return p;
+  return "<p>" + p.replace(/\n/g, "<br>") + "</p>";
+ }).join("");
+
+ s = s.replace(/\u0000CODE(\d+)\u0000/g, (_, i) => {
+  const b = blocks[Number(i)];
+  return '<div class="codebox"><div class="codehead"><span>' +
+   escapeHtml(b.lang || "Kod") +
+   '</span><button class="copy">Kopyala</button></div><pre><code>' +
+   escapeHtml(b.code) +
+   '</code></pre></div>';
+ });
+
+ return s;
+}
+
+function typesetMath(el, deneme = 0) {
+ if (window.MathJax && window.MathJax.typesetPromise) {
+  window.MathJax.typesetPromise([el]).catch(() => {});
+ } else if (deneme < 40) {
+  setTimeout(() => typesetMath(el, deneme + 1), 150);
+ }
+}
+
+function addSpeechButton(bubble, text) {
+ const btn = document.createElement("button");
+ btn.className = "speak";
+ btn.textContent = "🔊 Sesli dinle";
+
+ btn.onclick = () => {
+  if (!("speechSynthesis" in window)) {
+   toast("Tarayıcı seslendirmeyi desteklemiyor.");
+   return;
+  }
+
+  speechSynthesis.cancel();
+
+  const temiz = text
+   .replace(/```[\s\S]*?```/g, " kod bloğu ")
+   .replace(/[*#`_>]/g, "");
+
+  const utterance = new SpeechSynthesisUtterance(temiz);
+  utterance.lang = "tr-TR";
+  utterance.rate = 1;
+
+  speechSynthesis.speak(utterance);
+ };
+
+ bubble.appendChild(btn);
+}
+
+function bindCopy(bubble) {
+ bubble.querySelectorAll(".copy").forEach(btn => {
+  btn.onclick = async () => {
+   const code = btn.closest(".codebox").querySelector("code").textContent;
+
+   try {
+    await navigator.clipboard.writeText(code);
+   } catch(e) {
+    const t = document.createElement("textarea");
+    t.value = code;
+    document.body.appendChild(t);
+    t.select();
+    document.execCommand("copy");
+    t.remove();
+   }
+
+   btn.textContent = "Kopyalandı";
+   setTimeout(() => btn.textContent = "Kopyala", 1500);
+  };
+ });
+}
+
+function renderMessage(role, content, scroll = true) {
+ $("welcome")?.remove();
+
+ const row = document.createElement("div");
+ row.className = "msgrow " + (role === "user" ? "user" : "assistant");
+
+ if (role !== "user") {
+  const avatar = document.createElement("div");
+  avatar.className = "avatar";
+  avatar.textContent = "AI";
+  row.appendChild(avatar);
+ }
+
+ const bubble = document.createElement("div");
+ bubble.className = "bubble";
+
+ if (role === "user") {
+  bubble.textContent = content;
+ } else {
+  bubble.innerHTML = renderMarkdown(content);
+  typesetMath(bubble);
+  bindCopy(bubble);
+  addSpeechButton(bubble, content);
+ }
+
+ row.appendChild(bubble);
+ messagesEl.appendChild(row);
+
+ if (scroll) scrollBottom();
+
+ return row;
+}
+
+async function sendMessage() {
+ const text = entry.value.trim();
+
+ if (!text && !selectedFile) return;
+
+ const file = selectedFile;
+ selectedFile = null;
+ $("preview").style.display = "none";
+
+ entry.value = "";
+ entry.style.height = "auto";
+ $("send").disabled = true;
+
+ let display = text;
+ if (file) display += (display ? "\n\n" : "") + "📎 " + file.name;
+
+ conversation.push({role: "user", content: display});
+ renderMessage("user", display);
+ saveHistory();
+
+ const wait = renderMessage("assistant", "Yanıt hazırlanıyor…");
+ const bubble = wait.querySelector(".bubble");
+
+ try {
+  const form = new FormData();
+  form.append("mesajlar", JSON.stringify(conversation.slice(-20)));
+  form.append("mesaj", text);
+
+  if (file) form.append("dosya", file, file.name);
+
+  const response = await fetch("/sohbet", {
+   method: "POST",
+   headers: {"X-Groq-Key": localStorage.getItem("groq_key") || ""},
+   body: form
+  });
+
+  const data = await response.json();
+
+  if (!response.ok || !data.ok) {
+   throw new Error(data.cevap || "İstek başarısız.");
+  }
+
+  bubble.innerHTML = renderMarkdown(data.cevap);
+  typesetMath(bubble);
+  bindCopy(bubble);
+  addSpeechButton(bubble, data.cevap);
+
+  conversation.push({role: "assistant", content: data.cevap});
+  saveHistory();
+
+ } catch(e) {
+  bubble.textContent = "Hata: " + e.message;
+  toast("Yanıt alınamadı");
+ } finally {
+  $("send").disabled = false;
+  scrollBottom();
+ }
+}
+
+$("mic").onclick = async () => {
+ if (recorder && recorder.state === "recording") {
+  recorder.stop();
+  $("mic").classList.remove("recording");
+  $("mic").innerHTML = MIC_SVG;
+  return;
+ }
+
+ if (!window.isSecureContext ||
+     !navigator.mediaDevices?.getUserMedia ||
+     !window.MediaRecorder) {
+  $("micInput").click();
+  return;
+ }
+
+ try {
+  const stream = await navigator.mediaDevices.getUserMedia({audio: true});
+  audioChunks = [];
+
+  recorder = new MediaRecorder(stream);
+
+  recorder.ondataavailable = e => {
+   if (e.data.size) audioChunks.push(e.data);
+  };
+
+  recorder.onstop = () => {
+   stream.getTracks().forEach(t => t.stop());
+
+   const blob = new Blob(audioChunks, {
+    type: recorder.mimeType || "audio/webm"
+   });
+
+   selectedFile = new File([blob], "ses-kaydi.webm", {
+    type: blob.type
+   });
+
+   $("filename").textContent = "🎙 Ses kaydı hazır";
+   $("preview").style.display = "block";
+   toast("Ses hazır. Göndermek için oka bas.");
+  };
+
+  recorder.start();
+  $("mic").classList.add("recording");
+  $("mic").innerHTML = STOP_SVG;
+  toast("Konuş. Bitirmek için tekrar mikrofona bas.");
+
+ } catch(e) {
+  toast("Mikrofon izni yok. Telefonun ses kaydedicisini kullan.");
+  $("micInput").click();
+ }
+};
+
+function askKey() {
+ const k = prompt("Groq API anahtarını yapıştır (console.groq.com adresinden ücretsiz):",
+  localStorage.getItem("groq_key") || "");
+ if (k !== null) {
+  localStorage.setItem("groq_key", k.trim());
+  toast("Anahtar kaydedildi");
+ }
+}
+$("keyBtn").onclick = askKey;
+if (!localStorage.getItem("groq_key")) setTimeout(askKey, 600);
+
+messagesEl.appendChild(welcomeEl());
+renderHistory();
+</script>
+</body>
+</html>'''
+
+
+def extract_file(file):
+    name = secure_filename(file.filename or "") or "dosya"
+    raw = file.read()
+    mime = file.mimetype or mimetypes.guess_type(name)[0] or ""
+    uzanti = os.path.splitext(name)[1].lower()
+
+    heic_mi = uzanti in (".heic", ".heif") or mime.lower() in (
+        "image/heic", "image/heif", "image/heic-sequence",
+        "image/heif-sequence"
+    )
+
+    if mime.startswith("image/") or heic_mi:
+        if heic_mi:
+            try:
+                from PIL import Image
+                from pillow_heif import register_heif_opener
+
+                register_heif_opener()
+                with Image.open(io.BytesIO(raw)) as im:
+                    im = im.convert("RGB")
+                    cikti = io.BytesIO()
+                    im.save(cikti, format="JPEG", quality=92)
+                    raw = cikti.getvalue()
+
+                mime = "image/jpeg"
+                name = os.path.splitext(name)[0] + ".jpg"
+
+            except Exception as e:
+                return {
+                    "type": "error",
+                    "text": (
+                        "HEIC fotoğrafı JPEG'e dönüştürülemedi. "
+                        f"Detay: {str(e)[:250]}"
+                    ),
+                }
+
+        return {
+            "type": "image",
+            "mime": mime,
+            "data": base64.b64encode(raw).decode("ascii"),
+            "name": name,
+        }
+
+    ses_uzantilari = (
+        ".wav", ".mp3", ".m4a", ".ogg", ".webm",
+        ".flac", ".mpga", ".aac", ".amr", ".3gp"
+    )
+
+    if mime.startswith("audio/") or name.lower().endswith(ses_uzantilari):
+        try:
+            files = {
+                "file": (name, io.BytesIO(raw), mime or "audio/webm")
+            }
+            data = {
+                "model": "whisper-large-v3-turbo",
+                "response_format": "json",
+            }
+
+            r = requests.post(
+                f"{API_URL}/audio/transcriptions",
+                headers=groq_headers(),
+                files=files,
+                data=data,
+                timeout=120,
+            )
+
+            if r.status_code != 200:
+                raise RuntimeError(r.text[:300])
+
+            return {
+                "type": "text",
+                "text": "Ses kaydının metni:\n" + r.json().get("text", ""),
+            }
+
+        except Exception as e:
+            return {
+                "type": "text",
+                "text": f"Ses çözümlenemedi: {e}",
+            }
+
+    if name.lower().endswith(".pdf"):
+        try:
+            from pypdf import PdfReader
+
+            reader = PdfReader(io.BytesIO(raw))
+            text = "\n".join(p.extract_text() or "" for p in reader.pages)
+
+            return {
+                "type": "text",
+                "text": f"PDF ({name}):\n{text[:25000]}",
+            }
+
+        except Exception as e:
+            return {
+                "type": "text",
+                "text": f"PDF okunamadı: {e}",
+            }
+
+    if name.lower().endswith(".docx"):
+        try:
+            from zipfile import ZipFile
+            from xml.etree import ElementTree
+
+            with ZipFile(io.BytesIO(raw)) as z:
+                xml = z.read("word/document.xml")
+
+            root = ElementTree.fromstring(xml)
+            text = " ".join(
+                el.text or ""
+                for el in root.iter()
+                if el.tag.endswith("}t")
+            )
+
+            return {
+                "type": "text",
+                "text": f"DOCX ({name}):\n{text[:25000]}",
+            }
+
+        except Exception as e:
+            return {
+                "type": "text",
+                "text": f"DOCX okunamadı: {e}",
+            }
+
+    metin_uzantilari = (
+        ".txt", ".md", ".csv", ".json", ".py",
+        ".js", ".html", ".css", ".xml", ".log"
+    )
+
+    if mime.startswith("text/") or name.lower().endswith(metin_uzantilari):
+        return {
+            "type": "text",
+            "text": (
+                f"Dosya içeriği ({name}):\n"
+                + raw.decode("utf-8", errors="replace")[:25000]
+            ),
+        }
+
+    return {
+        "type": "text",
+        "text": (
+            f"{name} dosyası desteklenmiyor. "
+            "TXT, PDF, DOCX, kod, fotoğraf veya ses dene."
+        ),
+    }
+
+
+@app.route("/")
+def ana():
+    isim = ""
+    a = request.authorization
+
+    if a and a.username:
+        isim = a.username.strip()[:30]
+
+    if isim:
+        ilk = "İ" if isim[0] == "i" else isim[0].upper()
+        isim = ilk + isim[1:]
+
+    js_isim = json.dumps(isim).replace("<", "\\u003c")
+    sayfa = HTML.replace("__ISIM__", js_isim)
+
+    return Response(
+        sayfa,
+        mimetype="text/html; charset=utf-8",
+    )
+
+
+@app.route("/sohbet", methods=["POST"])
+def sohbet():
+    if not (request.headers.get("X-Groq-Key", "").strip() or API_KEY):
+        return jsonify(
+            ok=False,
+            cevap="Önce sağ üstteki 🔑 düğmesinden Groq API anahtarını gir.",
+        ), 500
+
+    try:
+        mesajlar = json.loads(request.form.get("mesajlar", "[]"))
+        mesaj = request.form.get("mesaj", "").strip()
+        uploaded = request.files.get("dosya")
+
+        attachment = (
+            extract_file(uploaded)
+            if uploaded and uploaded.filename
+            else None
+        )
+
+        if attachment and attachment["type"] == "error":
+            return jsonify(ok=False, cevap=attachment["text"]), 400
+
+        if not mesaj and not attachment:
+            return jsonify(
+                ok=False,
+                cevap="Mesaj veya dosya gönder.",
+            ), 400
+
+        api_messages = [{"role": "system", "content": SISTEM}]
+
+        for item in mesajlar[-20:-1]:
+            role = item.get("role")
+            content = item.get("content", "")
+
+            if role in ("user", "assistant") and isinstance(content, str):
+                api_messages.append({
+                    "role": role,
+                    "content": content[:12000],
+                })
+
+        user_content = mesaj or "Eklediğim dosyayı incele ve yardımcı ol."
+        model = MODEL
+
+        if attachment:
+            if attachment["type"] == "image":
+                user_content = [
+                    {
+                        "type": "text",
+                        "text": user_content or "Fotoğrafı incele.",
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": (
+                                f"data:{attachment['mime']};base64,"
+                                f"{attachment['data']}"
+                            )
+                        },
+                    },
+                ]
+                model = VISION_MODEL
+
+            else:
+                user_content += "\n\n" + attachment["text"]
+
+        api_messages.append({
+            "role": "user",
+            "content": user_content,
+        })
+
+        adaylar = [model] + [
+            m for m in YEDEK_MODELLER if m != model
+        ]
+
+        if attachment and attachment["type"] == "image":
+            adaylar = [model]
+
+        r = None
+
+        for aday in adaylar:
+            govde = {
+                "model": aday,
+                "messages": api_messages,
+                "temperature": 0.7,
+                "max_tokens": 4096,
+            }
+
+            if aday.startswith("openai/gpt-oss"):
+                govde["reasoning_effort"] = "low"
+
+            r = requests.post(
+                f"{API_URL}/chat/completions",
+                headers={
+                    **groq_headers(),
+                    "Content-Type": "application/json",
+                },
+                json=govde,
+                timeout=120,
+            )
+
+            if (
+                r.status_code in (400, 404)
+                and "model" in r.text.lower()
+            ):
+                continue
+
+            break
+
+        if r is None:
+            return jsonify(
+                ok=False,
+                cevap="Kullanılabilir model bulunamadı.",
+            ), 502
+
+        if r.status_code != 200:
+            try:
+                detail = r.json().get("error", {}).get("message", r.text)
+            except Exception:
+                detail = r.text
+
+            return jsonify(
+                ok=False,
+                cevap=(
+                    f"Groq API hatası ({r.status_code}): "
+                    f"{str(detail)[:500]}"
+                ),
+            ), 502
+
+        answer = r.json()["choices"][0]["message"]["content"]
+
+        if isinstance(answer, list):
+            answer = "\n".join(
+                p.get("text", "")
+                for p in answer
+                if isinstance(p, dict)
+            )
+
+        if not isinstance(answer, str):
+            answer = str(answer or "Yanıt oluşturulamadı.")
+
+        return jsonify(ok=True, cevap=answer)
+
+    except requests.Timeout:
+        return jsonify(
+            ok=False,
+            cevap="İstek zaman aşımına uğradı. Tekrar dene.",
+        ), 504
+
+    except Exception as e:
+        return jsonify(
+            ok=False,
+            cevap=f"Sunucu hatası: {str(e)[:300]}",
+        ), 500
+
+
+@app.errorhandler(413)
+def too_large(_):
+    return jsonify(
+        ok=False,
+        cevap="Dosya çok büyük. En fazla 20 MB yükleyebilirsin.",
+    ), 413
+
+
+def yerel_ip():
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+    try:
+        s.connect(("10.255.255.255", 1))
+        return s.getsockname()[0]
+
+    except Exception:
+        return "IP-bulunamadi"
+
+    finally:
+        s.close()
+
+
+if __name__ == "__main__":
+    if HOST != "127.0.0.1" and not SIFRE:
+        print(
+            "HATA: Ağa açıkken APP_SIFRE şart. "
+            ".env dosyasına APP_SIFRE=... ekle."
+        )
+        raise SystemExit(1)
+
+    print("\nBu telefon: http://127.0.0.1:5000")
+
+    if HOST != "127.0.0.1":
+        print(
+            f"Arkadaşın: http://{yerel_ip()}:5000 (aynı Wi-Fi)\n"
+        )
+
+    app.run(host=HOST, port=5000, debug=False)
