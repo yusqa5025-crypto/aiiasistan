@@ -679,8 +679,13 @@ async function sendMessage() {
  entry.style.height = "auto";
  $("send").disabled = true;
 
- let display = text;
- if (files.length) display += (display ? "\n\n" : "") + files.map(f => "📎 " + f.name).join("\n");
+ const voiceOnly = sesliSohbetAktif &&
+   files.length === 1 && files[0].name === "ses-kaydi.webm";
+  let display = voiceOnly ? "Sesli mesaj" : text;
+  if (files.length && !voiceOnly) {
+   display += (display ? "\n\n" : "") +
+    files.map(f => "Dosya: " + f.name).join("\n");
+  }
 
  conversation.push({role: "user", content: display});
  renderMessage("user", display);
@@ -692,7 +697,12 @@ async function sendMessage() {
  try {
   const form = new FormData();
   form.append("mesajlar", JSON.stringify(conversation.slice(-20)));
-  form.append("mesaj", text);
+  form.append(
+   "mesaj",
+   voiceOnly
+    ? "Bu ses kaydındaki konuşmayı yazıya çevir ve kullanıcının söylediklerine doğrudan cevap ver. Doğal, kısa ve konuşma dilinde yanıtla."
+    : text
+  );
 
   files.forEach(file => form.append("dosyalar", file, file.name));
 
@@ -713,30 +723,46 @@ async function sendMessage() {
   bindCopy(bubble);
   addSpeechButton(bubble, data.cevap);
 
-  if (sesliSohbetAktif && "speechSynthesis" in window) {
-   speechSynthesis.cancel();
-   const okunacak = String(data.cevap)
-    .replace(/```[\\s\\S]*?```/g, "Kod bloğu")
-    .replace(/[*#`_>]/g, "");
-   const ses = new SpeechSynthesisUtterance(okunacak);
-   ses.lang = "tr-TR";
-   ses.rate = 1;
-   ses.onstart = () => {
-    if (sesliSohbetAktif) voiceStatus("Yanıt veriyorum…");
-   };
-   ses.onend = () => {
-    if (sesliSohbetAktif && !voiceClosing) {
-     voiceStatus("Yeniden dinliyorum…");
-     setTimeout(() => startVoiceRecording(), 350);
-    }
-   };
-   ses.onerror = () => {
-    if (sesliSohbetAktif && !voiceClosing) {
-     setTimeout(() => startVoiceRecording(), 500);
-    }
-   };
-   if (sesliSohbetAktif) voiceStatus("Yanıt hazırlanıyor…");
-   speechSynthesis.speak(ses);
+  if (sesliSohbetAktif) {
+   if ("speechSynthesis" in window) {
+    speechSynthesis.cancel();
+
+    const okunacak = String(data.cevap)
+     .replace(/```[\s\S]*?```/g, "kod bloğu")
+     .replace(/[*#`_>]/g, "");
+
+    const ses = new SpeechSynthesisUtterance(okunacak);
+    ses.lang = "tr-TR";
+    ses.rate = 1;
+
+    const turkceSes = speechSynthesis.getVoices()
+     .find(v => /^tr(-|_)/i.test(v.lang));
+    if (turkceSes) ses.voice = turkceSes;
+
+    ses.onstart = () => {
+     if (sesliSohbetAktif) voiceStatus("Yanıt veriyorum…");
+    };
+
+    ses.onend = () => {
+     if (sesliSohbetAktif && !voiceClosing) {
+      voiceStatus("Dinliyorum…");
+      setTimeout(() => startVoiceRecording(), 400);
+     }
+    };
+
+    ses.onerror = () => {
+     if (sesliSohbetAktif && !voiceClosing) {
+      voiceStatus("Dinlemeye yeniden başlıyorum…");
+      setTimeout(() => startVoiceRecording(), 800);
+     }
+    };
+
+    voiceStatus("Yanıt hazırlanıyor…");
+    speechSynthesis.speak(ses);
+   } else {
+    voiceStatus("Seslendirme desteklenmiyor; yeniden dinliyorum…");
+    setTimeout(() => startVoiceRecording(), 800);
+   }
   }
 
   conversation.push({role: "assistant", content: data.cevap});
