@@ -288,6 +288,11 @@ button{cursor:pointer}
 #dlg button{border:0;border-radius:20px;padding:10px 18px;background:#444;font-size:15px}
 #dlg .okb{background:#f4f4f4;color:#222}
 </style>
+<style>
+#voiceMode{display:none!important}
+#send.voice{background:#3b6fe0;color:#fff}
+#send.voice:hover{background:#4a7bea}
+</style>
 </head>
 
 <body>
@@ -1237,6 +1242,35 @@ $("moreBtn").onclick=e=>{
  menu.style.display="block";
 };
 document.addEventListener("click",e=>{if(!menu.contains(e.target))menu.style.display="none";});
+})();
+</script>
+<script>
+(function(){
+ const btn = document.getElementById("send");
+ const ARROW = '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>';
+ const WAVE = '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M5 10v4M9 6v12M13 3v18M17 8v8M21 11v2"/></svg>';
+ let son = null;
+ function bos(){
+  return !entry.value.trim() && !(selectedFiles && selectedFiles.length);
+ }
+ function guncelle(){
+  const b = bos();
+  if (b === son) return;
+  son = b;
+  btn.innerHTML = b ? WAVE : ARROW;
+  btn.classList.toggle("voice", b);
+  btn.setAttribute("aria-label", b ? "Sesli sohbet" : "Gönder");
+ }
+ btn.onclick = function(){
+  if (bos()) {
+   document.getElementById("voiceMode").click();
+  } else {
+   sendMessage();
+  }
+ };
+ entry.addEventListener("input", guncelle);
+ setInterval(guncelle, 250);
+ guncelle();
 })();
 </script>
 </body>
