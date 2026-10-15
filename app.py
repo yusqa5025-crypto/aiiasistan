@@ -293,6 +293,9 @@ button{cursor:pointer}
 #send.voice{background:#3b6fe0;color:#fff}
 #send.voice:hover{background:#4a7bea}
 </style>
+<style>
+#composerWrap{padding-bottom:calc(max(12px,env(safe-area-inset-bottom)) + var(--kb,0px))}
+</style>
 </head>
 
 <body>
@@ -1271,6 +1274,31 @@ document.addEventListener("click",e=>{if(!menu.contains(e.target))menu.style.dis
  entry.addEventListener("input", guncelle);
  setInterval(guncelle, 250);
  guncelle();
+})();
+</script>
+<script>
+(function(){
+ const e = document.getElementById("entry");
+ const H0 = window.innerHeight;
+ let t = null;
+ function ac(){
+  clearTimeout(t);
+  t = setTimeout(function(){
+   const kuculdu = window.innerHeight < H0 - 120 ||
+     (window.visualViewport && window.visualViewport.height < H0 - 120);
+   if (!kuculdu && document.activeElement === e) {
+    document.documentElement.style.setProperty("--kb", Math.round(H0 * 0.36) + "px");
+    const m = document.getElementById("messages");
+    m.scrollTop = m.scrollHeight;
+   }
+  }, 450);
+ }
+ function kapat(){
+  clearTimeout(t);
+  document.documentElement.style.setProperty("--kb", "0px");
+ }
+ e.addEventListener("focus", ac);
+ e.addEventListener("blur", kapat);
 })();
 </script>
 </body>
