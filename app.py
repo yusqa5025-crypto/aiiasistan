@@ -230,6 +230,7 @@ button{cursor:pointer}
 #mic{background:#3d3d3d;color:#f4f4f4}
 #mic:hover{background:#4a4a4a}
 #mic.recording{background:#d33;color:white}
+#voiceMode.voice-active{background:#315a43;color:#fff}
 #send{background:#f4f4f4;color:#222}
 #send:hover{background:#ddd}
 #send:disabled{opacity:.5}
@@ -315,7 +316,8 @@ button{cursor:pointer}
     <div id="tools">
      <button class="tool" id="plus" aria-label="Dosya ekle">＋</button>
      <span class="sp"></span>
-     <button class="tool" id="mic" aria-label="Ses kaydet">
+     <button class="tool" id="voiceMode" aria-label="Sesli sohbet" title="Sesli sohbet">🗣️</button>
+      <button class="tool" id="mic" aria-label="Ses kaydet">
       <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
      </button>
      <button class="tool" id="send" aria-label="Gönder">
@@ -360,6 +362,7 @@ let activeId = null;
 let selectedFiles = [];
 let recorder = null;
 let audioChunks = [];
+let sesliSohbetAktif = false;
 
 function toast(t) {
  $("toast").textContent = t;
@@ -710,6 +713,17 @@ async function sendMessage() {
   bindCopy(bubble);
   addSpeechButton(bubble, data.cevap);
 
+  if (sesliSohbetAktif && "speechSynthesis" in window) {
+   speechSynthesis.cancel();
+   const okunacak = String(data.cevap)
+    .replace(/```[\\s\\S]*?```/g, "Kod bloğu")
+    .replace(/[*#`_>]/g, "");
+   const ses = new SpeechSynthesisUtterance(okunacak);
+   ses.lang = "tr-TR";
+   ses.rate = 1;
+   speechSynthesis.speak(ses);
+  }
+
   conversation.push({role: "assistant", content: data.cevap});
   saveHistory();
 
@@ -721,6 +735,18 @@ async function sendMessage() {
   scrollBottom();
  }
 }
+
+$("voiceMode").onclick = () => {
+  sesliSohbetAktif = !sesliSohbetAktif;
+  $("voiceMode").classList.toggle("voice-active", sesliSohbetAktif);
+  $("voiceMode").textContent = sesliSohbetAktif ? "🔊" : "🗣️";
+  toast(sesliSohbetAktif
+    ? "Sesli sohbet açıldı. Mikrofonla konuş."
+    : "Sesli sohbet kapatıldı.");
+  if (!sesliSohbetAktif && "speechSynthesis" in window) {
+    speechSynthesis.cancel();
+  }
+};
 
 $("mic").onclick = async () => {
  if (recorder && recorder.state === "recording") {
@@ -758,7 +784,13 @@ $("mic").onclick = async () => {
 
    $("filename").textContent = "🎙 Ses kaydı hazır";
    $("preview").style.display = "block";
-   toast("Ses hazır. Göndermek için oka bas.");
+
+   if (typeof sesliSohbetAktif !== "undefined" && sesliSohbetAktif) {
+    toast("Ses gönderiliyor...");
+    sendMessage();
+   } else {
+    toast("Ses hazır. Göndermek için oka bas.");
+   }
   };
 
   recorder.start();
