@@ -1000,7 +1000,7 @@ def sohbet():
                 user_content = [
                     {
                         "type": "text",
-                        "text": user_content or "Fotoğrafı incele.",
+                        "text": (user_content or "Fotoğrafı incele.") + "\n\n(Bu bir test sayfasıysa: her soruyu numarasıyla, şıkları tek tek değerlendirerek adım adım çöz. Sonda 'Numara: Şık' formatında özet cevap listesi ver.)",
                     },
                     {
                         "type": "image_url",
@@ -1040,7 +1040,7 @@ def sohbet():
             }
 
             if aday.startswith("openai/gpt-oss"):
-                govde["reasoning_effort"] = "low"
+                govde["reasoning_effort"] = "high"
 
             r = requests.post(
                 f"{API_URL}/chat/completions",
