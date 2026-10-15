@@ -17,6 +17,7 @@ jobs:
           java-version: 21
       - run: npm install
       - run: npx cap add android
+      - run: npx @capacitor/assets generate --android --iconBackgroundColor "#212121" --iconBackgroundColorDark "#212121"
       - name: Mikrofon izni
         run: |
           sed -i 's#<application#<uses-permission android:name="android.permission.RECORD_AUDIO" />\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />\n    <application#' android/app/src/main/AndroidManifest.xml

@@ -1,6 +1,6 @@
 {
   "appId": "com.yusif.aiasistan",
-  "appName": "AI Asistan",
+  "appName": "Asistan",
   "webDir": "www",
   "server": { "url": "https://aiiasistan.onrender.com" },
   "android": { "adjustMarginsForEdgeToEdge": "force" }
