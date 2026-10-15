@@ -275,7 +275,7 @@ button{cursor:pointer}
   <button class="iconbtn" id="menuBtn" aria-label="Menü">☰</button>
   <div class="brand">AI Asistan<small>Metin · Fotoğraf · Ses · Dosya</small></div>
  </div>
- <div class="topgroup"><button class="iconbtn" id="keyBtn" aria-label="API anahtarı">🔑</button><button id="newBtn">＋ Yeni sohbet</button></div>
+ <div class="topgroup"><button class="iconbtn" id="keyBtn" aria-label="API anahtarı" title="API anahtarı">⚿</button><button id="newBtn">＋ Yeni sohbet</button></div>
 </header>
 
 <div id="layout">
@@ -326,7 +326,7 @@ button{cursor:pointer}
    <div id="hint">AI Asistan hata yapabilir. Önemli bilgileri kontrol et.</div>
    <input id="fileInput" type="file" accept="image/*,audio/*,.pdf,.txt,.md,.csv,.json,.py,.js,.html,.css,.xml,.log,.docx">
    <input id="cameraInput" type="file" accept="image/*" capture="environment">
-   <input id="photoInput" type="file" accept="image/*">
+   <input id="photoInput" type="file" accept="image/*" multiple>
    <input id="audioInput" type="file" accept="audio/*">
    <input id="micInput" type="file" accept="audio/*" capture>
   </div>
@@ -357,7 +357,7 @@ try {
 }
 
 let activeId = null;
-let selectedFile = null;
+let selectedFiles = [];
 let recorder = null;
 let audioChunks = [];
 
@@ -396,7 +396,7 @@ function welcomeEl() {
 function newChat() {
  activeId = null;
  conversation = [];
- selectedFile = null;
+ selectedFiles = [];
  $("preview").style.display = "none";
  messagesEl.replaceChildren(welcomeEl());
  closeMenus();
@@ -476,22 +476,30 @@ $("attachMenu").onclick = e => {
 
 ["fileInput", "cameraInput", "photoInput", "audioInput", "micInput"].forEach(id => {
  $(id).onchange = () => {
-  const f = $(id).files[0];
+  const input = $(id);
+  const files = Array.from(input.files || []);
 
-  if (f) {
-   selectedFile = f;
-   $("filename").textContent = (id === "micInput" ? "🎙 " : "📎 ") + f.name;
+  if (files.length) {
+   selectedFiles = id === "photoInput" ? files : [files[0]];
+   const ses = id === "micInput";
+
+   $("filename").textContent =
+    (ses ? "🎙 " : "📎 ") +
+    selectedFiles.map(f => f.name).join(", ");
    $("preview").style.display = "block";
 
-   if (id === "micInput") toast("Ses hazır. Göndermek için oka bas.");
+   if (ses) toast("Ses hazır. Göndermek için oka bas.");
+   else if (selectedFiles.length > 1) {
+    toast(selectedFiles.length + " fotoğraf seçildi.");
+   }
   }
 
-  $(id).value = "";
+  input.value = "";
  };
 });
 
 $("removeFile").onclick = () => {
- selectedFile = null;
+ selectedFiles = [];
  $("preview").style.display = "none";
 };
 
@@ -658,10 +666,10 @@ function renderMessage(role, content, scroll = true) {
 async function sendMessage() {
  const text = entry.value.trim();
 
- if (!text && !selectedFile) return;
+ if (!text && !selectedFiles.length) return;
 
- const file = selectedFile;
- selectedFile = null;
+ const files = [...selectedFiles];
+ selectedFiles = [];
  $("preview").style.display = "none";
 
  entry.value = "";
@@ -669,7 +677,7 @@ async function sendMessage() {
  $("send").disabled = true;
 
  let display = text;
- if (file) display += (display ? "\n\n" : "") + "📎 " + file.name;
+ if (files.length) display += (display ? "\n\n" : "") + files.map(f => "📎 " + f.name).join("\n");
 
  conversation.push({role: "user", content: display});
  renderMessage("user", display);
@@ -683,7 +691,7 @@ async function sendMessage() {
   form.append("mesajlar", JSON.stringify(conversation.slice(-20)));
   form.append("mesaj", text);
 
-  if (file) form.append("dosya", file, file.name);
+  files.forEach(file => form.append("dosyalar", file, file.name));
 
   const response = await fetch("/sohbet", {
    method: "POST",
@@ -746,7 +754,7 @@ $("mic").onclick = async () => {
     type: recorder.mimeType || "audio/webm"
    });
 
-   selectedFile = new File([blob], "ses-kaydi.webm", {type: blob.type});
+   selectedFiles = [new File([blob], "ses-kaydi.webm", {type: blob.type})];
 
    $("filename").textContent = "🎙 Ses kaydı hazır";
    $("preview").style.display = "block";
@@ -1042,16 +1050,24 @@ def sohbet():
     try:
         mesajlar = json.loads(request.form.get("mesajlar", "[]"))
         mesaj = request.form.get("mesaj", "").strip()
-        uploaded = request.files.get("dosya")
+        uploaded_files = request.files.getlist("dosyalar")
+        if not uploaded_files:
+            uploaded_files = request.files.getlist("dosya")
 
-        attachment = (
-            extract_file(uploaded) if uploaded and uploaded.filename else None
+        attachments = [
+            extract_file(f)
+            for f in uploaded_files
+            if f and f.filename
+        ]
+
+        attachment_error = next(
+            (a for a in attachments if a.get("type") == "error"),
+            None,
         )
+        if attachment_error:
+            return jsonify(ok=False, cevap=attachment_error["text"]), 400
 
-        if attachment and attachment["type"] == "error":
-            return jsonify(ok=False, cevap=attachment["text"]), 400
-
-        if not mesaj and not attachment:
+        if not mesaj and not attachments:
             return jsonify(ok=False, cevap="Mesaj veya dosya gönder."), 400
 
         api_messages = [{"role": "system", "content": SISTEM}]
@@ -1063,7 +1079,7 @@ def sohbet():
             if role in ("user", "assistant") and isinstance(content, str):
                 api_messages.append({"role": role, "content": content[:12000]})
 
-        user_content = mesaj or "Eklediğim dosyayı incele ve yardımcı ol."
+        user_content = mesaj or "Eklediğim dosyaları incele ve yardımcı ol."
         low = user_content.lower()
         if "çevir" in low or "tercüme" in low:
             user_content += (
@@ -1074,40 +1090,50 @@ def sohbet():
         model = MODEL
         adaylar = None
         efor = "medium"
+        metin_parcalari = []
+        okunamayan_resimler = []
+        test_notu = (
+            "\n\n(Bu bir test sayfasıysa: her soruyu kendi numarasıyla, "
+            "adım adım çöz, sonucu şıklarla eşleştir. Sonda tablo değil, "
+            "düz 'Numara: Şık' listesi ver.)"
+        )
 
-        if attachment and attachment["type"] == "image":
-            efor = "high"
-            test_notu = (
-                "\n\n(Bu bir test sayfasıysa: her soruyu kendi numarasıyla, "
-                "adım adım çöz, sonucu şıklarla eşleştir. Sonda tablo değil, "
-                "düz 'Numara: Şık' listesi ver.)"
-            )
-            ocr_text = resimden_metin(attachment)
-
-            if ocr_text:
-                user_content += (
-                    test_notu
-                    + "\n\n--- FOTOĞRAFTAN OKUNAN METİN ---\n"
-                    + ocr_text
-                )
+        for attachment in attachments:
+            if attachment["type"] == "image":
+                efor = "high"
+                ocr_text = resimden_metin(attachment)
+                if ocr_text:
+                    metin_parcalari.append(
+                        test_notu
+                        + "\n\n--- FOTOĞRAFTAN OKUNAN METİN: "
+                        + attachment.get("name", "Fotoğraf")
+                        + " ---\n"
+                        + ocr_text
+                    )
+                else:
+                    okunamayan_resimler.append(attachment)
             else:
-                # OCR olmadı: fotoğrafı doğrudan görsel modele ver
-                user_content = [
-                    {"type": "text", "text": user_content + test_notu},
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": (
-                                f"data:{attachment['mime']};base64,"
-                                f"{attachment['data']}"
-                            )
-                        },
-                    },
-                ]
-                adaylar = list(VISION_MODELLER)
+                metin_parcalari.append(
+                    "\n\n" + attachment.get("text", "")
+                )
 
-        elif attachment:
-            user_content += "\n\n" + attachment["text"]
+        if metin_parcalari:
+            user_content += "".join(metin_parcalari)
+
+        if okunamayan_resimler:
+            icerik = [{"type": "text", "text": user_content + test_notu}]
+            for attachment in okunamayan_resimler:
+                icerik.append({
+                    "type": "image_url",
+                    "image_url": {
+                        "url": (
+                            f"data:{attachment['mime']};base64,"
+                            f"{attachment['data']}"
+                        )
+                    },
+                })
+            user_content = icerik
+            adaylar = list(VISION_MODELLER)
 
         api_messages.append({"role": "user", "content": user_content})
 
