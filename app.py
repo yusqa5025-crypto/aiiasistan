@@ -41,7 +41,7 @@ VISION_MODELLER = []
 for _m in (
     VISION_MODEL,
     "meta-llama/llama-4-scout-17b-16e-instruct",
-    "meta-llama/llama-4-maverick-17b-128e-instruct",
+    "openai/gpt-oss-120b",
 ):
     if _m and _m not in VISION_MODELLER:
         VISION_MODELLER.append(_m)
