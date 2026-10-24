@@ -40,15 +40,13 @@ VISION_MODEL = os.environ.get("GROQ_VISION_MODEL", "qwen/qwen3.8-27b")
 VISION_MODELLER = []
 for _m in (
     VISION_MODEL,
-    "meta-llama/llama-4-scout-17b-16e-instruct",
-    "openai/gpt-oss-120b",
+    "qwen/qwen3.8-27b",
 ):
     if _m and _m not in VISION_MODELLER:
         VISION_MODELLER.append(_m)
 
 YEDEK_MODELLER = [
-    "llama-3.3-70b-versatile",
-    "llama-3.1-8b-instant",
+    "openai/gpt-oss-20b",
 ]
 
 SISTEM = """Her zaman kullanıcının yazdığı dilde cevap ver.
